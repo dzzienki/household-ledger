@@ -91,6 +91,11 @@ export default function LedgerDetailScreen() {
         <QuickButton label="멤버" onPress={() => router.push(`/(app)/ledger/${id}/members`)} />
         <QuickButton label="통계" onPress={() => router.push(`/(app)/ledger/${id}/stats`)} />
       </View>
+      <View style={styles.quickRow}>
+        <QuickButton label="반복 거래" onPress={() => router.push(`/(app)/ledger/${id}/recurring`)} />
+        <QuickButton label="예산" onPress={() => router.push(`/(app)/ledger/${id}/budgets`)} />
+        <QuickButton label="CSV" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
+      </View>
 
       <FlatList
         data={txnQuery.data ?? []}

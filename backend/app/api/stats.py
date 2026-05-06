@@ -10,6 +10,7 @@ from app.api.deps import DbDep, get_ledger_membership
 from app.models import Category, Ledger, LedgerMember, Transaction
 from app.models.category import TransactionType
 from app.schemas.stats import CategoryTotal, MonthlyTotal
+from app.services.recurring import materialize_due_for_ledger
 
 router = APIRouter(prefix="/ledgers/{ledger_id}/stats", tags=["stats"])
 
@@ -21,6 +22,8 @@ async def monthly_totals(
     year: int | None = None,
 ) -> list[MonthlyTotal]:
     ledger, _ = membership
+    if await materialize_due_for_ledger(db, ledger.id) > 0:
+        await db.commit()
     target_year = year or datetime.now().year
 
     income_sum = func.coalesce(

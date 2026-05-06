@@ -33,6 +33,7 @@ export default function NewTransactionScreen() {
 
   return (
     <TransactionForm
+      ledgerId={ledgerId!}
       categories={categoriesQuery.data ?? []}
       submitting={createMutation.isPending}
       submitLabel="저장"

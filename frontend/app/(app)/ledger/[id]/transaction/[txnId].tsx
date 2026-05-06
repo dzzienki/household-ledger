@@ -79,6 +79,7 @@ export default function EditTransactionScreen() {
     <>
       <Stack.Screen options={{ title: '거래 수정' }} />
       <TransactionForm
+        ledgerId={ledgerId!}
         initial={txnQuery.data}
         categories={categoriesQuery.data ?? []}
         submitting={updateMutation.isPending}

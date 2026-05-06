@@ -53,3 +53,30 @@ function safeParseJson(text: string): unknown {
     return text;
   }
 }
+
+export async function apiUpload<T = unknown>(path: string, formData: FormData): Promise<T> {
+  const token = await storage.get(ACCESS_TOKEN_KEY);
+  const url = `${API_URL}${path.startsWith('/') ? path : `/${path}`}`;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(url, { method: 'POST', headers, body: formData });
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  const payload = text ? safeParseJson(text) : undefined;
+  if (!res.ok) {
+    const detail = (payload as { detail?: unknown } | undefined)?.detail ?? text;
+    throw new ApiError(res.status, detail);
+  }
+  return payload as T;
+}
+
+export async function apiDownloadBlob(path: string): Promise<Blob> {
+  const token = await storage.get(ACCESS_TOKEN_KEY);
+  const url = `${API_URL}${path.startsWith('/') ? path : `/${path}`}`;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  return res.blob();
+}

@@ -22,6 +22,10 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: str = ""
 
+    ANTHROPIC_API_KEY: str | None = None
+    ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
+    UPLOAD_DIR: str = "uploads"
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

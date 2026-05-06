@@ -9,6 +9,7 @@ from app.api.deps import DbDep, get_ledger_membership, require_role
 from app.models import Category, Ledger, LedgerMember, LedgerRole, Transaction
 from app.models.category import TransactionType
 from app.schemas.transaction import TransactionCreate, TransactionPublic, TransactionUpdate
+from app.services.recurring import materialize_due_for_ledger
 
 router = APIRouter(prefix="/ledgers/{ledger_id}/transactions", tags=["transactions"])
 
@@ -39,6 +40,8 @@ async def list_transactions(
     offset: int = 0,
 ) -> list[Transaction]:
     ledger, _ = membership
+    if await materialize_due_for_ledger(db, ledger.id) > 0:
+        await db.commit()
     stmt = select(Transaction).where(Transaction.ledger_id == ledger.id)
     if type is not None:
         stmt = stmt.where(Transaction.type == type)

@@ -57,3 +57,61 @@ export interface AuthTokens {
   refresh_token: string;
   token_type: string;
 }
+
+export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+export interface RecurringTransaction {
+  id: string;
+  ledger_id: string;
+  category_id: string | null;
+  type: TransactionType;
+  amount: string;
+  currency: string;
+  payee: string | null;
+  memo: string | null;
+  frequency: RecurrenceFrequency;
+  interval: number;
+  start_date: string;
+  end_date: string | null;
+  next_due_date: string;
+  active: boolean;
+  created_at: string;
+}
+
+export interface Budget {
+  id: string;
+  ledger_id: string;
+  category_id: string | null;
+  amount: string;
+  currency: string;
+  created_at: string;
+}
+
+export interface BudgetStatus {
+  id: string;
+  category_id: string | null;
+  category_name: string;
+  color: string;
+  amount: string;
+  spent: string;
+  remaining: string;
+  percent: number;
+  is_over: boolean;
+}
+
+export interface CategorySuggestion {
+  category_id: string | null;
+  category_name: string | null;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface ReceiptExtraction {
+  amount: number | null;
+  transaction_date: string | null;
+  payee: string | null;
+  memo: string | null;
+  suggested_category_name: string | null;
+  confidence: number;
+  reasoning: string;
+}
