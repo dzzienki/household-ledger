@@ -39,3 +39,11 @@ class LedgerMemberPublic(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class LedgerMemberDetail(BaseModel):
+    user_id: UUID
+    email: EmailStr
+    name: str
+    role: LedgerRole
+    created_at: datetime

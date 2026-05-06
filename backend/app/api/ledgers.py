@@ -9,10 +9,12 @@ from app.models import Ledger, LedgerMember, LedgerRole, User
 from app.schemas.ledger import (
     LedgerCreate,
     LedgerInviteRequest,
+    LedgerMemberDetail,
     LedgerMemberPublic,
     LedgerPublic,
     LedgerUpdate,
 )
+from app.services.categories import seed_default_categories
 
 router = APIRouter(prefix="/ledgers", tags=["ledgers"])
 
@@ -44,6 +46,7 @@ async def create_ledger(
     db.add(ledger)
     await db.flush()
     db.add(LedgerMember(ledger_id=ledger.id, user_id=current_user.id, role=LedgerRole.OWNER))
+    await seed_default_categories(db, ledger.id)
     await db.commit()
     await db.refresh(ledger)
     return ledger
@@ -83,14 +86,29 @@ async def delete_ledger(
     await db.commit()
 
 
-@router.get("/{ledger_id}/members", response_model=list[LedgerMemberPublic])
+@router.get("/{ledger_id}/members", response_model=list[LedgerMemberDetail])
 async def list_members(
     db: DbDep,
     membership: Annotated[tuple[Ledger, LedgerMember], Depends(get_ledger_membership)],
-) -> list[LedgerMember]:
+) -> list[LedgerMemberDetail]:
     ledger, _ = membership
-    stmt = select(LedgerMember).where(LedgerMember.ledger_id == ledger.id)
-    return list((await db.exec(stmt)).all())
+    stmt = (
+        select(LedgerMember, User)
+        .join(User, User.id == LedgerMember.user_id)
+        .where(LedgerMember.ledger_id == ledger.id)
+        .order_by(LedgerMember.created_at)
+    )
+    rows = (await db.exec(stmt)).all()
+    return [
+        LedgerMemberDetail(
+            user_id=member.user_id,
+            email=user.email,
+            name=user.name,
+            role=member.role,
+            created_at=member.created_at,
+        )
+        for member, user in rows
+    ]
 
 
 @router.post("/{ledger_id}/members", response_model=LedgerMemberPublic, status_code=status.HTTP_201_CREATED)

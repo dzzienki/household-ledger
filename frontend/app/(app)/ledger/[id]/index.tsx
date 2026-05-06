@@ -30,8 +30,7 @@ export default function LedgerDetailScreen() {
 
   const categoriesById = new Map((categoriesQuery.data ?? []).map((c) => [c.id, c]));
 
-  const isLoading = ledgerQuery.isLoading || txnQuery.isLoading;
-  if (isLoading) {
+  if (ledgerQuery.isLoading || txnQuery.isLoading) {
     return (
       <View style={styles.center}>
         <ActivityIndicator />
@@ -56,45 +55,59 @@ export default function LedgerDetailScreen() {
     },
     { income: 0, expense: 0 },
   );
+  const currency = ledgerQuery.data?.currency ?? 'KRW';
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: ledgerQuery.data?.name ?? '거래 내역' }} />
+      <Stack.Screen
+        options={{
+          title: ledgerQuery.data?.name ?? '거래 내역',
+          headerRight: () => (
+            <Pressable onPress={() => router.push(`/(app)/ledger/${id}/stats`)} hitSlop={8}>
+              <Text style={styles.headerLink}>통계</Text>
+            </Pressable>
+          ),
+        }}
+      />
 
       <View style={styles.summary}>
         <View style={styles.summaryItem}>
           <Text style={styles.summaryLabel}>수입</Text>
           <Text style={[styles.summaryValue, { color: '#16A34A' }]}>
-            {formatCurrency(totals.income, ledgerQuery.data?.currency ?? 'KRW')}
+            {formatCurrency(totals.income, currency)}
           </Text>
         </View>
         <View style={styles.summaryDivider} />
         <View style={styles.summaryItem}>
           <Text style={styles.summaryLabel}>지출</Text>
           <Text style={[styles.summaryValue, { color: '#DC2626' }]}>
-            {formatCurrency(totals.expense, ledgerQuery.data?.currency ?? 'KRW')}
+            {formatCurrency(totals.expense, currency)}
           </Text>
         </View>
+      </View>
+
+      <View style={styles.quickRow}>
+        <QuickButton label="카테고리" onPress={() => router.push(`/(app)/ledger/${id}/categories`)} />
+        <QuickButton label="멤버" onPress={() => router.push(`/(app)/ledger/${id}/members`)} />
+        <QuickButton label="통계" onPress={() => router.push(`/(app)/ledger/${id}/stats`)} />
       </View>
 
       <FlatList
         data={txnQuery.data ?? []}
         keyExtractor={(t) => t.id}
-        contentContainerStyle={{ padding: 16 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         refreshing={txnQuery.isRefetching}
         onRefresh={() => txnQuery.refetch()}
         renderItem={({ item }) => {
           const category = item.category_id ? categoriesById.get(item.category_id) : null;
           return (
-            <View style={styles.row}>
+            <Pressable
+              style={styles.row}
+              onPress={() => router.push(`/(app)/ledger/${id}/transaction/${item.id}`)}
+            >
               <View style={styles.rowLeft}>
-                <View
-                  style={[
-                    styles.colorDot,
-                    { backgroundColor: category?.color ?? '#9CA3AF' },
-                  ]}
-                />
+                <View style={[styles.colorDot, { backgroundColor: category?.color ?? '#9CA3AF' }]} />
                 <View>
                   <Text style={styles.rowTitle}>{item.payee || category?.name || '(미분류)'}</Text>
                   <Text style={styles.rowMeta}>
@@ -111,7 +124,7 @@ export default function LedgerDetailScreen() {
                 {item.type === 'income' ? '+' : '-'}
                 {formatCurrency(item.amount, item.currency)}
               </Text>
-            </View>
+            </Pressable>
           );
         }}
         ListEmptyComponent={<Text style={styles.empty}>아직 거래가 없습니다</Text>}
@@ -127,14 +140,24 @@ export default function LedgerDetailScreen() {
   );
 }
 
+function QuickButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable style={styles.quickButton} onPress={onPress}>
+      <Text style={styles.quickButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   errorText: { color: '#DC2626' },
+  headerLink: { color: '#3B82F6', fontWeight: '600', marginRight: 12 },
   summary: {
     flexDirection: 'row',
     backgroundColor: '#F9FAFB',
     margin: 16,
+    marginBottom: 8,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
@@ -144,6 +167,15 @@ const styles = StyleSheet.create({
   summaryDivider: { width: 1, backgroundColor: '#E5E7EB', marginHorizontal: 8 },
   summaryLabel: { fontSize: 12, color: '#6B7280', marginBottom: 4 },
   summaryValue: { fontSize: 18, fontWeight: '700' },
+  quickRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginBottom: 8 },
+  quickButton: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  quickButtonText: { fontWeight: '600', color: '#374151' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -166,11 +198,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderRadius: 28,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 5,
   },
   fabText: { color: '#fff', fontWeight: '700', fontSize: 16 },
 });

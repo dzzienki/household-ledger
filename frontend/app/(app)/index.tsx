@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { api } from '@/lib/api';
@@ -66,6 +66,13 @@ export default function LedgerListScreen() {
         )}
         ListEmptyComponent={<Text style={styles.empty}>가계부가 없습니다</Text>}
       />
+
+      <Pressable
+        style={styles.fab}
+        onPress={() => router.push('/(app)/new-ledger')}
+      >
+        <Text style={styles.fabText}>+ 새 가계부</Text>
+      </Pressable>
     </View>
   );
 }
@@ -101,4 +108,14 @@ const styles = StyleSheet.create({
   errorText: { color: '#DC2626', marginBottom: 16 },
   retryButton: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, backgroundColor: '#3B82F6' },
   retryText: { color: '#fff', fontWeight: '600' },
+  fab: {
+    position: 'absolute',
+    bottom: 24,
+    alignSelf: 'center',
+    backgroundColor: '#3B82F6',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 28,
+  },
+  fabText: { color: '#fff', fontWeight: '700', fontSize: 16 },
 });

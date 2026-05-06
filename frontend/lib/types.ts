@@ -21,6 +21,8 @@ export interface Ledger {
 
 export interface LedgerMember {
   user_id: string;
+  email: string;
+  name: string;
   role: LedgerRole;
   created_at: string;
 }

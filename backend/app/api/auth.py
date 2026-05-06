@@ -6,6 +6,7 @@ from app.core.security import create_access_token, create_refresh_token, hash_pa
 from app.models import Ledger, LedgerMember, LedgerRole, LedgerType, User
 from app.schemas.auth import LoginRequest, SignupRequest, TokenResponse
 from app.schemas.user import UserPublic
+from app.services.categories import seed_default_categories
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -33,6 +34,7 @@ async def signup(payload: SignupRequest, db: DbDep) -> User:
     await db.flush()
 
     db.add(LedgerMember(ledger_id=personal.id, user_id=user.id, role=LedgerRole.OWNER))
+    await seed_default_categories(db, personal.id)
     await db.commit()
     await db.refresh(user)
     return user

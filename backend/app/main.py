@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, categories, health, ledgers, transactions, users
+from app.api import auth, categories, health, ledgers, stats, transactions, users
 from app.core.config import settings
 
 
@@ -28,6 +28,7 @@ def create_app() -> FastAPI:
     app.include_router(ledgers.router, prefix=api_prefix)
     app.include_router(categories.router, prefix=api_prefix)
     app.include_router(transactions.router, prefix=api_prefix)
+    app.include_router(stats.router, prefix=api_prefix)
 
     return app
 
