@@ -1,14 +1,40 @@
 import { useQuery } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import {
+  DEFAULT_FILTER,
+  TransactionFilterSheet,
+  isFilterActive,
+  resolveRange,
+  type TransactionFilterState,
+} from '@/components/transaction-filter';
 import { api } from '@/lib/api';
 import { formatCurrency, formatDate } from '@/lib/format';
+import { useDebouncedValue } from '@/lib/hooks';
 import type { Category, Ledger, Transaction } from '@/lib/types';
 
 export default function LedgerDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+
+  const [searchInput, setSearchInput] = useState('');
+  const debouncedSearch = useDebouncedValue(searchInput, 300);
+  const [filter, setFilter] = useState<TransactionFilterState>(DEFAULT_FILTER);
+  const [filterOpen, setFilterOpen] = useState(false);
+
+  const queryParams = useMemo(() => {
+    const params = new URLSearchParams();
+    if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
+    if (filter.type !== 'all') params.set('type', filter.type);
+    if (filter.categoryId) params.set('category_id', filter.categoryId);
+    const range = resolveRange(filter);
+    if (range.start) params.set('start_date', range.start);
+    if (range.end) params.set('end_date', range.end);
+    const qs = params.toString();
+    return qs ? `?${qs}` : '';
+  }, [debouncedSearch, filter]);
 
   const ledgerQuery = useQuery({
     queryKey: ['ledger', id],
@@ -23,14 +49,14 @@ export default function LedgerDetailScreen() {
   });
 
   const txnQuery = useQuery({
-    queryKey: ['transactions', id],
-    queryFn: () => api<Transaction[]>(`/api/ledgers/${id}/transactions`),
+    queryKey: ['transactions', id, queryParams],
+    queryFn: () => api<Transaction[]>(`/api/ledgers/${id}/transactions${queryParams}`),
     enabled: !!id,
   });
 
   const categoriesById = new Map((categoriesQuery.data ?? []).map((c) => [c.id, c]));
 
-  if (ledgerQuery.isLoading || txnQuery.isLoading) {
+  if (ledgerQuery.isLoading) {
     return (
       <View style={styles.center}>
         <ActivityIndicator />
@@ -46,7 +72,8 @@ export default function LedgerDetailScreen() {
     );
   }
 
-  const totals = (txnQuery.data ?? []).reduce(
+  const txns = txnQuery.data ?? [];
+  const totals = txns.reduce(
     (acc, t) => {
       const v = Number(t.amount);
       if (t.type === 'income') acc.income += v;
@@ -56,6 +83,7 @@ export default function LedgerDetailScreen() {
     { income: 0, expense: 0 },
   );
   const currency = ledgerQuery.data?.currency ?? 'KRW';
+  const filterActive = isFilterActive(filter) || debouncedSearch.trim().length > 0;
 
   return (
     <View style={styles.container}>
@@ -72,18 +100,45 @@ export default function LedgerDetailScreen() {
 
       <View style={styles.summary}>
         <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>수입</Text>
+          <Text style={styles.summaryLabel}>수입{filterActive ? ' (필터)' : ''}</Text>
           <Text style={[styles.summaryValue, { color: '#16A34A' }]}>
             {formatCurrency(totals.income, currency)}
           </Text>
         </View>
         <View style={styles.summaryDivider} />
         <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>지출</Text>
+          <Text style={styles.summaryLabel}>지출{filterActive ? ' (필터)' : ''}</Text>
           <Text style={[styles.summaryValue, { color: '#DC2626' }]}>
             {formatCurrency(totals.expense, currency)}
           </Text>
         </View>
+      </View>
+
+      <View style={styles.searchRow}>
+        <View style={styles.searchInputWrap}>
+          <Text style={styles.searchIcon}>🔍</Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="거래처·메모 검색"
+            value={searchInput}
+            onChangeText={setSearchInput}
+            placeholderTextColor="#9CA3AF"
+            returnKeyType="search"
+          />
+          {searchInput.length > 0 && (
+            <Pressable onPress={() => setSearchInput('')} hitSlop={8}>
+              <Text style={styles.searchClear}>✕</Text>
+            </Pressable>
+          )}
+        </View>
+        <Pressable
+          style={[styles.filterButton, filterActive && styles.filterButtonActive]}
+          onPress={() => setFilterOpen(true)}
+        >
+          <Text style={[styles.filterButtonText, filterActive && styles.filterButtonTextActive]}>
+            필터{filterActive ? ' •' : ''}
+          </Text>
+        </Pressable>
       </View>
 
       <View style={styles.quickRow}>
@@ -97,43 +152,53 @@ export default function LedgerDetailScreen() {
         <QuickButton label="CSV" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
       </View>
 
-      <FlatList
-        data={txnQuery.data ?? []}
-        keyExtractor={(t) => t.id}
-        contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
-        ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-        refreshing={txnQuery.isRefetching}
-        onRefresh={() => txnQuery.refetch()}
-        renderItem={({ item }) => {
-          const category = item.category_id ? categoriesById.get(item.category_id) : null;
-          return (
-            <Pressable
-              style={styles.row}
-              onPress={() => router.push(`/(app)/ledger/${id}/transaction/${item.id}`)}
-            >
-              <View style={styles.rowLeft}>
-                <View style={[styles.colorDot, { backgroundColor: category?.color ?? '#9CA3AF' }]} />
-                <View>
-                  <Text style={styles.rowTitle}>{item.payee || category?.name || '(미분류)'}</Text>
-                  <Text style={styles.rowMeta}>
-                    {category?.name ?? '미분류'} · {formatDate(item.transaction_date)}
-                  </Text>
-                </View>
-              </View>
-              <Text
-                style={[
-                  styles.amount,
-                  { color: item.type === 'income' ? '#16A34A' : '#DC2626' },
-                ]}
+      {txnQuery.isLoading ? (
+        <View style={[styles.center, { flex: 1 }]}>
+          <ActivityIndicator />
+        </View>
+      ) : (
+        <FlatList
+          data={txns}
+          keyExtractor={(t) => t.id}
+          contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+          refreshing={txnQuery.isRefetching}
+          onRefresh={() => txnQuery.refetch()}
+          renderItem={({ item }) => {
+            const category = item.category_id ? categoriesById.get(item.category_id) : null;
+            return (
+              <Pressable
+                style={styles.row}
+                onPress={() => router.push(`/(app)/ledger/${id}/transaction/${item.id}`)}
               >
-                {item.type === 'income' ? '+' : '-'}
-                {formatCurrency(item.amount, item.currency)}
-              </Text>
-            </Pressable>
-          );
-        }}
-        ListEmptyComponent={<Text style={styles.empty}>아직 거래가 없습니다</Text>}
-      />
+                <View style={styles.rowLeft}>
+                  <View style={[styles.colorDot, { backgroundColor: category?.color ?? '#9CA3AF' }]} />
+                  <View>
+                    <Text style={styles.rowTitle}>{item.payee || category?.name || '(미분류)'}</Text>
+                    <Text style={styles.rowMeta}>
+                      {category?.name ?? '미분류'} · {formatDate(item.transaction_date)}
+                    </Text>
+                  </View>
+                </View>
+                <Text
+                  style={[
+                    styles.amount,
+                    { color: item.type === 'income' ? '#16A34A' : '#DC2626' },
+                  ]}
+                >
+                  {item.type === 'income' ? '+' : '-'}
+                  {formatCurrency(item.amount, item.currency)}
+                </Text>
+              </Pressable>
+            );
+          }}
+          ListEmptyComponent={
+            <Text style={styles.empty}>
+              {filterActive ? '검색 조건에 맞는 거래가 없습니다' : '아직 거래가 없습니다'}
+            </Text>
+          }
+        />
+      )}
 
       <Pressable
         style={styles.fab}
@@ -141,6 +206,15 @@ export default function LedgerDetailScreen() {
       >
         <Text style={styles.fabText}>+ 거래 추가</Text>
       </Pressable>
+
+      <TransactionFilterSheet
+        visible={filterOpen}
+        value={filter}
+        categories={categoriesQuery.data ?? []}
+        onChange={setFilter}
+        onClose={() => setFilterOpen(false)}
+        onClear={() => setFilter(DEFAULT_FILTER)}
+      />
     </View>
   );
 }
@@ -155,7 +229,7 @@ function QuickButton({ label, onPress }: { label: string; onPress: () => void })
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  center: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   errorText: { color: '#DC2626' },
   headerLink: { color: '#3B82F6', fontWeight: '600', marginRight: 12 },
   summary: {
@@ -172,6 +246,35 @@ const styles = StyleSheet.create({
   summaryDivider: { width: 1, backgroundColor: '#E5E7EB', marginHorizontal: 8 },
   summaryLabel: { fontSize: 12, color: '#6B7280', marginBottom: 4 },
   summaryValue: { fontSize: 18, fontWeight: '700' },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    gap: 8,
+    marginBottom: 8,
+  },
+  searchInputWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 40,
+  },
+  searchIcon: { fontSize: 14, marginRight: 6, color: '#6B7280' },
+  searchInput: { flex: 1, fontSize: 15, color: '#111827', paddingVertical: 0 },
+  searchClear: { color: '#6B7280', fontSize: 16, paddingHorizontal: 4 },
+  filterButton: {
+    paddingHorizontal: 14,
+    height: 40,
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+  },
+  filterButtonActive: { backgroundColor: '#1F2937' },
+  filterButtonText: { fontWeight: '700', color: '#374151' },
+  filterButtonTextActive: { color: '#fff' },
   quickRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginBottom: 8 },
   quickButton: {
     flex: 1,

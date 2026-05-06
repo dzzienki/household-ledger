@@ -36,6 +36,7 @@ async def list_transactions(
     category_id: UUID | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
+    q: str | None = Query(default=None, max_length=200, description="Search in payee/memo"),
     limit: int = Query(default=100, le=500),
     offset: int = 0,
 ) -> list[Transaction]:
@@ -51,6 +52,11 @@ async def list_transactions(
         stmt = stmt.where(Transaction.transaction_date >= start_date)
     if end_date is not None:
         stmt = stmt.where(Transaction.transaction_date <= end_date)
+    if q:
+        pattern = f"%{q.strip()}%"
+        stmt = stmt.where(
+            (Transaction.payee.ilike(pattern)) | (Transaction.memo.ilike(pattern))
+        )
     stmt = stmt.order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc())
     stmt = stmt.offset(offset).limit(limit)
     return list((await db.exec(stmt)).all())
