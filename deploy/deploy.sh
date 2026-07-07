@@ -46,4 +46,5 @@ sudo systemctl reload nginx
 
 echo ""
 echo "Deployed $BRANCH @ $(git rev-parse --short HEAD)"
-echo "API health:  curl -fsS https://$DOMAIN/api/health && echo OK"
+echo "App:         https://$DOMAIN$CONTEXT_ROOT/"
+echo "API health:  curl -fsS https://$DOMAIN$CONTEXT_ROOT/api/health && echo OK"

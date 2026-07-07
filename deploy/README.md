@@ -5,13 +5,19 @@ Deploys the app to a single Ubuntu/Debian server:
 - **Backend** (FastAPI) runs under **systemd** as `household-ledger-api`, listening on
   `127.0.0.1:8000`.
 - **Frontend** is built to a static site (`frontend/dist`, Expo web export) and served
-  by **nginx**, which also reverse-proxies `/api/` to the backend.
-- Both are served from a single domain, so the browser calls `https://DOMAIN/api/...`.
+  by **nginx**, which also reverse-proxies the API to the backend.
+- Everything is namespaced under a **context root** (`CONTEXT_ROOT`, default
+  `/household-ledger`) so it won't collide with other apps on the same nginx.
 
 ```
-Browser ──▶ nginx :443 ──┬──▶  /            frontend/dist   (static web app)
-                         └──▶  /api/   ──▶  127.0.0.1:8000  (uvicorn/FastAPI)
+Browser ──▶ nginx :443 ──┬──▶  /household-ledger/       frontend/dist   (static web app)
+                         └──▶  /household-ledger/api/ ──▶ 127.0.0.1:8000 (uvicorn/FastAPI)
+                                    │
+                                    └─ nginx rewrites the prefix back to /api/ for the backend
 ```
+
+> `CONTEXT_ROOT` in `deploy/config.env` **must match** `frontend/app.json`
+> → `expo.experiments.baseUrl`. Both default to `/household-ledger`.
 
 ## Server prerequisites (install once)
 
@@ -51,10 +57,10 @@ sudo certbot --nginx -d <DOMAIN>
 Verify:
 
 ```bash
-curl -fsS https://<DOMAIN>/api/health && echo   # -> {"status":"ok"}
+curl -fsS https://<DOMAIN>/household-ledger/api/health && echo   # -> {"status":"ok"}
 ```
 
-Then open `https://<DOMAIN>/` in a browser.
+Then open `https://<DOMAIN>/household-ledger/` in a browser.
 
 ## Subsequent deploys
 

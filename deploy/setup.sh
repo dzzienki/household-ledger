@@ -28,8 +28,8 @@ need nginx nginx
 need envsubst gettext-base
 
 echo "==> Rendering nginx site -> /etc/nginx/sites-available/household-ledger"
-export DOMAIN APP_DIR API_HOST API_PORT
-envsubst '${DOMAIN} ${APP_DIR} ${API_HOST} ${API_PORT}' \
+export DOMAIN CONTEXT_ROOT APP_DIR API_HOST API_PORT
+envsubst '${DOMAIN} ${CONTEXT_ROOT} ${APP_DIR} ${API_HOST} ${API_PORT}' \
   < "$SCRIPT_DIR/nginx.conf.template" \
   > /etc/nginx/sites-available/household-ledger
 ln -sf /etc/nginx/sites-available/household-ledger /etc/nginx/sites-enabled/household-ledger

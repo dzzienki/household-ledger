@@ -1,22 +1,23 @@
 # Rendered by deploy/setup.sh into /etc/nginx/sites-available/household-ledger.
-# Only ${DOMAIN} ${APP_DIR} ${API_HOST} ${API_PORT} are substituted; nginx's own
-# $uri / $host variables are left intact.
+# Only ${DOMAIN} ${CONTEXT_ROOT} ${APP_DIR} ${API_HOST} ${API_PORT} are substituted;
+# nginx's own $uri / $host variables are left intact.
+#
+# Everything lives under the project context root (default /household-ledger):
+#   ${CONTEXT_ROOT}/       -> Expo web static (built with baseUrl=${CONTEXT_ROOT})
+#   ${CONTEXT_ROOT}/api/   -> FastAPI backend (path rewritten back to /api/)
 
 server {
     listen 80;
     listen [::]:80;
     server_name ${DOMAIN};
 
-    # Expo web static export.
-    root ${APP_DIR}/frontend/dist;
-    index index.html;
-
-    # Uploaded/exported assets can be large; receipts are capped at 10MB server-side.
+    # Receipts are capped at 10MB server-side.
     client_max_body_size 12M;
 
-    # Backend API — the FastAPI app already namespaces its routes under /api.
-    location /api/ {
-        proxy_pass http://${API_HOST}:${API_PORT};
+    # Backend API. proxy_pass has a URI (/api/), so nginx replaces the matched
+    # "${CONTEXT_ROOT}/api/" prefix with "/api/" -> backend still sees /api/...
+    location ${CONTEXT_ROOT}/api/ {
+        proxy_pass http://${API_HOST}:${API_PORT}/api/;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
@@ -25,15 +26,14 @@ server {
         proxy_read_timeout 60s;
     }
 
-    # Static hashed assets can be cached aggressively.
-    location /_expo/ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        try_files $uri =404;
+    # Frontend static export. `alias` maps ${CONTEXT_ROOT}/ onto the dist dir.
+    location ${CONTEXT_ROOT}/ {
+        alias ${APP_DIR}/frontend/dist/;
+        try_files $uri $uri.html $uri/ ${CONTEXT_ROOT}/index.html;
     }
 
-    # SPA fallback for expo-router client routes.
-    location / {
-        try_files $uri $uri.html $uri/ /index.html;
+    # Bare context root without trailing slash -> redirect to the app.
+    location = ${CONTEXT_ROOT} {
+        return 301 ${CONTEXT_ROOT}/;
     }
 }
