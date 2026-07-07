@@ -90,15 +90,34 @@ cd ~/projects/household-ledger
 
 ## 2. 환경변수 파일
 
-### `/etc/household-ledger/household-ledger.env`
+`initial-setup.sh` 가 템플릿(`scripts/household-ledger.env.example`)을
+`/etc/household-ledger/household-ledger.env` 로 **600 root:root 로 복사**해 둡니다.
+따라서 처음부터 작성할 필요 없이 **`CHANGE_ME` / `HOST` 값만 채우면** 됩니다:
+
+```bash
+sudo nano /etc/household-ledger/household-ledger.env
+# JWT_SECRET 생성:  openssl rand -base64 32
+```
+
+> initial-setup 을 안 거치고 수동으로 배치하려면:
+> ```bash
+> sudo install -m 600 -o root -g root \
+>   scripts/household-ledger.env.example /etc/household-ledger/household-ledger.env
+> ```
+
+### 템플릿 내용 (`/etc/household-ledger/household-ledger.env`)
 
 ```ini
+# App
+APP_ENV=production
+APP_DEBUG=false
+
 # Database (둘 다 필요 — 앱은 async, alembic 도 async 엔진 사용)
-DATABASE_URL=postgresql+asyncpg://household:<PW>@<host>:5432/household_ledger
-SYNC_DATABASE_URL=postgresql://household:<PW>@<host>:5432/household_ledger
+DATABASE_URL=postgresql+asyncpg://household_ledger:CHANGE_ME@HOST:5432/household_ledger
+SYNC_DATABASE_URL=postgresql+psycopg://household_ledger:CHANGE_ME@HOST:5432/household_ledger
 
 # JWT — openssl rand -base64 32 로 생성
-JWT_SECRET=<32바이트 base64>
+JWT_SECRET=CHANGE_ME_LONG_RANDOM_STRING
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 REFRESH_TOKEN_EXPIRE_DAYS=14
 
@@ -113,12 +132,8 @@ ANTHROPIC_MODEL=claude-haiku-4-5-20251001
 UPLOAD_DIR=/var/lib/household-ledger/uploads
 ```
 
-권한:
-
-```bash
-sudo chmod 600 /etc/household-ledger/household-ledger.env
-sudo chown root:root /etc/household-ledger/household-ledger.env
-```
+> 권한(600 root:root)은 `initial-setup.sh` 가 `install -m 600 -o root -g root` 로 이미 설정.
+> 값 수정 후 별도 chmod 불필요.
 
 > **왜 600 root:root**: systemd(PID 1)가 EnvironmentFile 을 읽어 자식 프로세스(User=$USER)에
 > 환경변수로 주입. 실행 사용자가 시크릿 파일을 직접 못 읽는 게 더 안전. 그리고 `/etc`(etc_t)라야
