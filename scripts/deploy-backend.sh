@@ -37,7 +37,10 @@ fail()  { echo -e "${RED}[FAIL]${NC} $*" >&2; exit 1; }
 [ -f "$SRC_BACKEND/pyproject.toml" ] || fail "pyproject.toml 없음: $SRC_BACKEND"
 [ -d "$RUN_BACKEND" ] || fail "운영 디렉토리 없음: $RUN_BACKEND (먼저 ./scripts/initial-setup.sh)"
 command -v uv >/dev/null || fail "uv 미설치 (curl -LsSf https://astral.sh/uv/install.sh | sh)"
-systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service" \
+# 주의: `systemctl list-unit-files | grep -q` 는 pipefail 하에서 grep 이 조기 종료하며
+# systemctl 에 SIGPIPE(141)를 유발 → 매칭돼도 파이프라인이 실패로 잡히는 오탐 발생.
+# 단일 유닛을 조회하는 `systemctl cat` 으로 존재 여부를 확실하게 확인.
+systemctl cat "${SERVICE_NAME}.service" >/dev/null 2>&1 \
   || fail "systemd 서비스 미등록: $SERVICE_NAME (먼저 ./scripts/initial-setup.sh)"
 
 # --- 소스 → 운영 위치 동기화 (venv/캐시/시크릿 제외) ---
@@ -62,7 +65,8 @@ sudo systemctl restart "$SERVICE_NAME"
 # --- 헬스 체크 (최대 30초 대기) ---
 info "백엔드 부팅 대기..."
 for i in $(seq 1 30); do
-  if curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" | grep -q "^200$"; then
+  code=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
+  if [ "$code" = "200" ]; then
     ok "백엔드 응답 확인 (${i}초) — $HEALTH_URL"
     info "최근 startup 로그:"
     sudo journalctl -u "$SERVICE_NAME" --since "1 min ago" --no-pager | tail -6
