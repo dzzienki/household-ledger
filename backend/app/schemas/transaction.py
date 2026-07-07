@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.models.category import TransactionType
+from app.schemas.tag import TagPublic
 
 
 class TransactionCreate(BaseModel):
@@ -15,15 +16,18 @@ class TransactionCreate(BaseModel):
     transaction_date: date
     payee: str | None = Field(default=None, max_length=100)
     memo: str | None = Field(default=None, max_length=500)
+    tag_ids: list[UUID] = Field(default_factory=list)
 
 
 class TransactionUpdate(BaseModel):
     category_id: UUID | None = None
     type: TransactionType | None = None
     amount: Decimal | None = Field(default=None, gt=0, max_digits=15, decimal_places=2)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
     transaction_date: date | None = None
     payee: str | None = Field(default=None, max_length=100)
     memo: str | None = Field(default=None, max_length=500)
+    tag_ids: list[UUID] | None = None
 
 
 class TransactionPublic(BaseModel):
@@ -37,6 +41,7 @@ class TransactionPublic(BaseModel):
     transaction_date: date
     payee: str | None
     memo: str | None
+    tags: list[TagPublic] = Field(default_factory=list)
     created_at: datetime
 
     model_config = {"from_attributes": True}

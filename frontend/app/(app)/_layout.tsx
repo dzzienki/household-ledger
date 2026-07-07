@@ -27,6 +27,8 @@ export default function AppLayout() {
         options={{ title: '거래 수정', presentation: 'modal' }}
       />
       <Stack.Screen name="ledger/[id]/categories" options={{ title: '카테고리' }} />
+      <Stack.Screen name="ledger/[id]/tags" options={{ title: '태그' }} />
+      <Stack.Screen name="ledger/[id]/exchange-rates" options={{ title: '환율' }} />
       <Stack.Screen name="ledger/[id]/members" options={{ title: '멤버' }} />
       <Stack.Screen name="ledger/[id]/stats" options={{ title: '통계' }} />
       <Stack.Screen name="ledger/[id]/recurring" options={{ title: '반복 거래' }} />

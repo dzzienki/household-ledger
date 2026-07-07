@@ -7,10 +7,12 @@ from app.api import (
     budgets,
     categories,
     csv_io,
+    exchange_rates,
     health,
     ledgers,
     recurring,
     stats,
+    tags,
     transactions,
     users,
 )
@@ -39,6 +41,8 @@ def create_app() -> FastAPI:
     app.include_router(users.router, prefix=api_prefix)
     app.include_router(ledgers.router, prefix=api_prefix)
     app.include_router(categories.router, prefix=api_prefix)
+    app.include_router(tags.router, prefix=api_prefix)
+    app.include_router(exchange_rates.router, prefix=api_prefix)
     app.include_router(transactions.router, prefix=api_prefix)
     app.include_router(stats.router, prefix=api_prefix)
     app.include_router(recurring.router, prefix=api_prefix)

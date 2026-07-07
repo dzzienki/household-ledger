@@ -1,12 +1,13 @@
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import type { Category, TransactionType } from '@/lib/types';
+import type { Category, Tag, TransactionType } from '@/lib/types';
 
 export type DateRangePreset = 'all' | 'thisMonth' | 'lastMonth' | 'last3Months' | 'thisYear' | 'custom';
 
 export interface TransactionFilterState {
   type: TransactionType | 'all';
   categoryId: string | null;
+  tagId: string | null;
   range: DateRangePreset;
   customStart: string;
   customEnd: string;
@@ -15,6 +16,7 @@ export interface TransactionFilterState {
 export const DEFAULT_FILTER: TransactionFilterState = {
   type: 'all',
   categoryId: null,
+  tagId: null,
   range: 'all',
   customStart: '',
   customEnd: '',
@@ -30,7 +32,7 @@ const RANGE_LABEL: Record<DateRangePreset, string> = {
 };
 
 export function isFilterActive(f: TransactionFilterState): boolean {
-  return f.type !== 'all' || f.categoryId !== null || f.range !== 'all';
+  return f.type !== 'all' || f.categoryId !== null || f.tagId !== null || f.range !== 'all';
 }
 
 export function resolveRange(f: TransactionFilterState): { start?: string; end?: string } {
@@ -66,12 +68,13 @@ interface Props {
   visible: boolean;
   value: TransactionFilterState;
   categories: Category[];
+  tags: Tag[];
   onChange: (next: TransactionFilterState) => void;
   onClose: () => void;
   onClear: () => void;
 }
 
-export function TransactionFilterSheet({ visible, value, categories, onChange, onClose, onClear }: Props) {
+export function TransactionFilterSheet({ visible, value, categories, tags, onChange, onClose, onClear }: Props) {
   const filteredCategories = categories.filter(
     (c) => value.type === 'all' || c.type === value.type,
   );
@@ -183,6 +186,37 @@ export function TransactionFilterSheet({ visible, value, categories, onChange, o
                 </Pressable>
               ))}
             </View>
+
+            {tags.length > 0 && (
+              <>
+                <Text style={styles.label}>태그</Text>
+                <View style={styles.row}>
+                  <Pressable
+                    style={[styles.chip, value.tagId === null && styles.chipActive]}
+                    onPress={() => onChange({ ...value, tagId: null })}
+                  >
+                    <Text style={[styles.chipText, value.tagId === null && styles.chipTextActive]}>
+                      전체
+                    </Text>
+                  </Pressable>
+                  {tags.map((t) => (
+                    <Pressable
+                      key={t.id}
+                      style={[
+                        styles.chip,
+                        { borderColor: t.color, borderWidth: 1.5 },
+                        value.tagId === t.id && { backgroundColor: t.color, borderColor: t.color },
+                      ]}
+                      onPress={() => onChange({ ...value, tagId: value.tagId === t.id ? null : t.id })}
+                    >
+                      <Text style={[styles.chipText, value.tagId === t.id && styles.chipTextActive]}>
+                        #{t.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            )}
           </ScrollView>
 
           <Pressable style={styles.applyButton} onPress={onClose}>

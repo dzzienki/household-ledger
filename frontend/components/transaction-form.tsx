@@ -4,15 +4,18 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ApiError, api, apiUpload } from '@/lib/api';
-import type { CategorySuggestion, Category, ReceiptExtraction, Transaction, TransactionType } from '@/lib/types';
+import { CURRENCIES } from '@/lib/currencies';
+import type { CategorySuggestion, Category, Ledger, ReceiptExtraction, Tag, Transaction, TransactionType } from '@/lib/types';
 
 export interface TransactionFormValue {
   type: TransactionType;
   amount: number;
+  currency: string;
   transaction_date: string;
   category_id: string | null;
   payee: string | null;
   memo: string | null;
+  tag_ids: string[];
 }
 
 interface Props {
@@ -43,14 +46,39 @@ export function TransactionForm({
 }: Props) {
   const [type, setType] = useState<TransactionType>(initial?.type ?? 'expense');
   const [amount, setAmount] = useState(initial ? String(Number(initial.amount)) : '');
+  const [currency, setCurrency] = useState(initial?.currency ?? 'KRW');
+  const [currencyTouched, setCurrencyTouched] = useState(!!initial);
   const [payee, setPayee] = useState(initial?.payee ?? '');
   const [memo, setMemo] = useState(initial?.memo ?? '');
   const [categoryId, setCategoryId] = useState<string | null>(initial?.category_id ?? null);
+  const [tagIds, setTagIds] = useState<string[]>(initial?.tags?.map((t) => t.id) ?? []);
   const [transactionDate, setTransactionDate] = useState(
     initial?.transaction_date ?? new Date().toISOString().slice(0, 10),
   );
   const [aiTip, setAiTip] = useState<string | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
+
+  const ledgerQuery = useQuery({
+    queryKey: ['ledger', ledgerId],
+    queryFn: () => api<Ledger>(`/api/ledgers/${ledgerId}`),
+    enabled: !!ledgerId,
+  });
+  const baseCurrency = ledgerQuery.data?.currency ?? 'KRW';
+
+  // For a brand-new transaction, default the currency to the ledger's base currency
+  // once we know it (unless the user has already picked one).
+  useEffect(() => {
+    if (!initial && !currencyTouched && ledgerQuery.data) {
+      setCurrency(ledgerQuery.data.currency);
+    }
+  }, [initial, currencyTouched, ledgerQuery.data]);
+
+  const tagsQuery = useQuery({
+    queryKey: ['tags', ledgerId],
+    queryFn: () => api<Tag[]>(`/api/ledgers/${ledgerId}/tags`),
+    enabled: !!ledgerId,
+  });
+  const availableTags = tagsQuery.data ?? [];
 
   const aiStatusQuery = useQuery({
     queryKey: ['ai', 'status', ledgerId],
@@ -67,6 +95,16 @@ export function TransactionForm({
   }, [type, categoryId, categories]);
 
   const filteredCategories = categories.filter((c) => c.type === type);
+
+  // Show the base currency first, then the rest.
+  const currencyOptions = [
+    ...CURRENCIES.filter((c) => c.code === baseCurrency),
+    ...CURRENCIES.filter((c) => c.code !== baseCurrency),
+  ];
+
+  function toggleTag(id: string) {
+    setTagIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
 
   const categorizeMutation = useMutation({
     mutationFn: () =>
@@ -151,10 +189,12 @@ export function TransactionForm({
     onSubmit({
       type,
       amount: num,
+      currency,
       transaction_date: transactionDate,
       category_id: categoryId,
       payee: payee.trim() || null,
       memo: memo.trim() || null,
+      tag_ids: tagIds,
     });
   }
 
@@ -199,6 +239,29 @@ export function TransactionForm({
         onChangeText={setAmount}
       />
 
+      <Text style={styles.label}>통화</Text>
+      <View style={styles.currencyRow}>
+        {currencyOptions.map((c) => (
+          <Pressable
+            key={c.code}
+            style={[styles.chip, currency === c.code && styles.chipActive]}
+            onPress={() => {
+              setCurrency(c.code);
+              setCurrencyTouched(true);
+            }}
+          >
+            <Text style={[styles.chipText, currency === c.code && styles.chipTextActive]}>
+              {c.code}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {currency !== baseCurrency && (
+        <Text style={styles.hint}>
+          기준 통화({baseCurrency})와 달라요. 통계 합산에는 환율 설정이 사용됩니다.
+        </Text>
+      )}
+
       <Text style={styles.label}>날짜</Text>
       <TextInput
         style={styles.input}
@@ -230,8 +293,8 @@ export function TransactionForm({
               key={c.id}
               style={[
                 styles.chip,
-                { borderColor: c.color },
-                categoryId === c.id && { backgroundColor: c.color },
+                { borderColor: c.color, borderWidth: 1.5 },
+                categoryId === c.id && { backgroundColor: c.color, borderColor: c.color },
               ]}
               onPress={() => setCategoryId(categoryId === c.id ? null : c.id)}
             >
@@ -241,6 +304,30 @@ export function TransactionForm({
         )}
       </View>
       {aiTip && <Text style={styles.aiTip}>{aiTip}</Text>}
+
+      <Text style={styles.label}>태그</Text>
+      <View style={styles.categoryRow}>
+        {availableTags.length === 0 ? (
+          <Text style={styles.emptyHint}>태그가 없습니다 (태그 관리에서 추가하세요)</Text>
+        ) : (
+          availableTags.map((t) => {
+            const selected = tagIds.includes(t.id);
+            return (
+              <Pressable
+                key={t.id}
+                style={[
+                  styles.chip,
+                  { borderColor: t.color, borderWidth: 1.5 },
+                  selected && { backgroundColor: t.color, borderColor: t.color },
+                ]}
+                onPress={() => toggleTag(t.id)}
+              >
+                <Text style={[styles.chipText, selected && { color: '#fff' }]}>#{t.name}</Text>
+              </Pressable>
+            );
+          })
+        )}
+      </View>
 
       <Text style={styles.label}>거래처</Text>
       <TextInput
@@ -306,6 +393,7 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, color: '#6B7280', marginTop: 12, marginBottom: 6, fontWeight: '600' },
   labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   aiInline: { color: '#7C3AED', fontWeight: '700', fontSize: 13, marginTop: 12 },
+  hint: { color: '#9CA3AF', fontSize: 12, marginTop: 6 },
   input: {
     borderWidth: 1,
     borderColor: '#D1D5DB',
@@ -314,10 +402,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: '#F9FAFB',
   },
+  currencyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   categoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   emptyHint: { color: '#9CA3AF', fontSize: 13 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5 },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#F9FAFB',
+  },
+  chipActive: { backgroundColor: '#1F2937', borderColor: '#1F2937' },
   chipText: { fontSize: 14, fontWeight: '600', color: '#374151' },
+  chipTextActive: { color: '#fff' },
   aiTip: { color: '#7C3AED', fontSize: 12, marginTop: 6, fontStyle: 'italic' },
   submit: { marginTop: 28, backgroundColor: '#3B82F6', paddingVertical: 14, borderRadius: 8, alignItems: 'center' },
   submitDisabled: { opacity: 0.6 },

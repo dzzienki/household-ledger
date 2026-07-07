@@ -11,9 +11,10 @@ import {
   type TransactionFilterState,
 } from '@/components/transaction-filter';
 import { api } from '@/lib/api';
+import { convertToBase, ratesToMap } from '@/lib/currencies';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/hooks';
-import type { Category, Ledger, Transaction } from '@/lib/types';
+import type { Category, ExchangeRate, Ledger, Tag, Transaction } from '@/lib/types';
 
 export default function LedgerDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -29,6 +30,7 @@ export default function LedgerDetailScreen() {
     if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
     if (filter.type !== 'all') params.set('type', filter.type);
     if (filter.categoryId) params.set('category_id', filter.categoryId);
+    if (filter.tagId) params.set('tag_id', filter.tagId);
     const range = resolveRange(filter);
     if (range.start) params.set('start_date', range.start);
     if (range.end) params.set('end_date', range.end);
@@ -45,6 +47,18 @@ export default function LedgerDetailScreen() {
   const categoriesQuery = useQuery({
     queryKey: ['categories', id],
     queryFn: () => api<Category[]>(`/api/ledgers/${id}/categories`),
+    enabled: !!id,
+  });
+
+  const tagsQuery = useQuery({
+    queryKey: ['tags', id],
+    queryFn: () => api<Tag[]>(`/api/ledgers/${id}/tags`),
+    enabled: !!id,
+  });
+
+  const ratesQuery = useQuery({
+    queryKey: ['exchange-rates', id],
+    queryFn: () => api<ExchangeRate[]>(`/api/ledgers/${id}/exchange-rates`),
     enabled: !!id,
   });
 
@@ -73,16 +87,18 @@ export default function LedgerDetailScreen() {
   }
 
   const txns = txnQuery.data ?? [];
+  const currency = ledgerQuery.data?.currency ?? 'KRW';
+  const rateMap = ratesToMap(ratesQuery.data ?? []);
+  const hasForeign = txns.some((t) => t.currency !== currency);
   const totals = txns.reduce(
     (acc, t) => {
-      const v = Number(t.amount);
+      const v = convertToBase(Number(t.amount), t.currency, currency, rateMap);
       if (t.type === 'income') acc.income += v;
       else acc.expense += v;
       return acc;
     },
     { income: 0, expense: 0 },
   );
-  const currency = ledgerQuery.data?.currency ?? 'KRW';
   const filterActive = isFilterActive(filter) || debouncedSearch.trim().length > 0;
 
   return (
@@ -113,6 +129,9 @@ export default function LedgerDetailScreen() {
           </Text>
         </View>
       </View>
+      {hasForeign && (
+        <Text style={styles.convertNote}>* 외화 거래는 {currency} 환율로 환산해 합산했습니다</Text>
+      )}
 
       <View style={styles.searchRow}>
         <View style={styles.searchInputWrap}>
@@ -143,13 +162,18 @@ export default function LedgerDetailScreen() {
 
       <View style={styles.quickRow}>
         <QuickButton label="카테고리" onPress={() => router.push(`/(app)/ledger/${id}/categories`)} />
+        <QuickButton label="태그" onPress={() => router.push(`/(app)/ledger/${id}/tags`)} />
         <QuickButton label="멤버" onPress={() => router.push(`/(app)/ledger/${id}/members`)} />
-        <QuickButton label="통계" onPress={() => router.push(`/(app)/ledger/${id}/stats`)} />
       </View>
       <View style={styles.quickRow}>
         <QuickButton label="반복 거래" onPress={() => router.push(`/(app)/ledger/${id}/recurring`)} />
         <QuickButton label="예산" onPress={() => router.push(`/(app)/ledger/${id}/budgets`)} />
+        <QuickButton label="통계" onPress={() => router.push(`/(app)/ledger/${id}/stats`)} />
+      </View>
+      <View style={styles.quickRow}>
+        <QuickButton label="환율" onPress={() => router.push(`/(app)/ledger/${id}/exchange-rates`)} />
         <QuickButton label="CSV" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
+        <View style={styles.quickSpacer} />
       </View>
 
       {txnQuery.isLoading ? (
@@ -173,11 +197,20 @@ export default function LedgerDetailScreen() {
               >
                 <View style={styles.rowLeft}>
                   <View style={[styles.colorDot, { backgroundColor: category?.color ?? '#9CA3AF' }]} />
-                  <View>
+                  <View style={styles.rowTextWrap}>
                     <Text style={styles.rowTitle}>{item.payee || category?.name || '(미분류)'}</Text>
                     <Text style={styles.rowMeta}>
                       {category?.name ?? '미분류'} · {formatDate(item.transaction_date)}
                     </Text>
+                    {item.tags.length > 0 && (
+                      <View style={styles.rowTags}>
+                        {item.tags.map((t) => (
+                          <View key={t.id} style={[styles.rowTag, { borderColor: t.color }]}>
+                            <Text style={[styles.rowTagText, { color: t.color }]}>#{t.name}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
                   </View>
                 </View>
                 <Text
@@ -211,6 +244,7 @@ export default function LedgerDetailScreen() {
         visible={filterOpen}
         value={filter}
         categories={categoriesQuery.data ?? []}
+        tags={tagsQuery.data ?? []}
         onChange={setFilter}
         onClose={() => setFilterOpen(false)}
         onClear={() => setFilter(DEFAULT_FILTER)}
@@ -246,6 +280,7 @@ const styles = StyleSheet.create({
   summaryDivider: { width: 1, backgroundColor: '#E5E7EB', marginHorizontal: 8 },
   summaryLabel: { fontSize: 12, color: '#6B7280', marginBottom: 4 },
   summaryValue: { fontSize: 18, fontWeight: '700' },
+  convertNote: { fontSize: 11, color: '#9CA3AF', paddingHorizontal: 16, marginBottom: 4 },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -284,6 +319,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   quickButtonText: { fontWeight: '600', color: '#374151' },
+  quickSpacer: { flex: 1 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -294,8 +330,12 @@ const styles = StyleSheet.create({
   },
   rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   colorDot: { width: 12, height: 12, borderRadius: 6 },
+  rowTextWrap: { flex: 1 },
   rowTitle: { fontSize: 15, fontWeight: '600' },
   rowMeta: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  rowTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  rowTag: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 1 },
+  rowTagText: { fontSize: 10, fontWeight: '600' },
   amount: { fontSize: 15, fontWeight: '700' },
   empty: { textAlign: 'center', color: '#9CA3AF', marginTop: 40 },
   fab: {

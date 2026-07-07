@@ -10,6 +10,7 @@ from app.api.deps import DbDep, get_ledger_membership
 from app.models import Category, Ledger, LedgerMember, Transaction
 from app.models.category import TransactionType
 from app.schemas.stats import CategoryTotal, MonthlyTotal
+from app.services.currency import converted_amount
 from app.services.recurring import materialize_due_for_ledger
 
 router = APIRouter(prefix="/ledgers/{ledger_id}/stats", tags=["stats"])
@@ -26,12 +27,13 @@ async def monthly_totals(
         await db.commit()
     target_year = year or datetime.now().year
 
+    amount = await converted_amount(db, ledger)
     income_sum = func.coalesce(
-        func.sum(case((Transaction.type == TransactionType.INCOME, Transaction.amount), else_=0)),
+        func.sum(case((Transaction.type == TransactionType.INCOME, amount), else_=0)),
         0,
     )
     expense_sum = func.coalesce(
-        func.sum(case((Transaction.type == TransactionType.EXPENSE, Transaction.amount), else_=0)),
+        func.sum(case((Transaction.type == TransactionType.EXPENSE, amount), else_=0)),
         0,
     )
     month_col = extract("month", Transaction.transaction_date).label("month")
@@ -75,7 +77,8 @@ async def category_totals(
     if start_date is None:
         start_date = today.replace(day=1)
 
-    total_amount = func.sum(Transaction.amount).label("total")
+    amount = await converted_amount(db, ledger)
+    total_amount = func.sum(amount).label("total")
     count_col = func.count(Transaction.id).label("count")
 
     stmt = (

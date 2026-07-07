@@ -11,6 +11,7 @@ from app.api.deps import DbDep, get_ledger_membership, require_role
 from app.models import Budget, Category, Ledger, LedgerMember, LedgerRole, Transaction
 from app.models.category import TransactionType
 from app.schemas.budget import BudgetCreate, BudgetPublic, BudgetStatus, BudgetUpdate
+from app.services.currency import converted_amount
 
 router = APIRouter(prefix="/ledgers/{ledger_id}/budgets", tags=["budgets"])
 
@@ -49,9 +50,13 @@ async def budget_status(
     if not budgets:
         return []
 
+    # Spending is converted into the ledger base currency so mixed-currency
+    # transactions are counted against budgets consistently.
+    amount = await converted_amount(db, ledger)
+
     # Map category_id -> spent amount this month
     spend_stmt = (
-        select(Transaction.category_id, func.coalesce(func.sum(Transaction.amount), 0))
+        select(Transaction.category_id, func.coalesce(func.sum(amount), 0))
         .where(
             Transaction.ledger_id == ledger.id,
             Transaction.type == TransactionType.EXPENSE,
@@ -64,13 +69,11 @@ async def budget_status(
     for cat_id, total in (await db.execute(spend_stmt)).all():
         spend_by_cat[cat_id] = Decimal(total)
 
-    total_expense_stmt = (
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.ledger_id == ledger.id,
-            Transaction.type == TransactionType.EXPENSE,
-            Transaction.transaction_date >= start,
-            Transaction.transaction_date < end,
-        )
+    total_expense_stmt = select(func.coalesce(func.sum(amount), 0)).where(
+        Transaction.ledger_id == ledger.id,
+        Transaction.type == TransactionType.EXPENSE,
+        Transaction.transaction_date >= start,
+        Transaction.transaction_date < end,
     )
     total_expense = Decimal((await db.execute(total_expense_stmt)).scalar() or 0)
 
