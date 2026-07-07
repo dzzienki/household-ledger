@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { confirmAsync, notify } from '@/lib/dialog';
 
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -47,7 +48,7 @@ export default function MembersScreen() {
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '초대 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
@@ -57,15 +58,13 @@ export default function MembersScreen() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['members', ledgerId] }),
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '제거 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
-  function confirmRemove(member: LedgerMember) {
-    Alert.alert('멤버 제거', `${member.name}님을 가계부에서 제거할까요?`, [
-      { text: '취소', style: 'cancel' },
-      { text: '제거', style: 'destructive', onPress: () => removeMutation.mutate(member.user_id) },
-    ]);
+  async function confirmRemove(member: LedgerMember) {
+    if (await confirmAsync('멤버 제거', `${member.name}님을 가계부에서 제거할까요?`, { confirmText: '제거', destructive: true }))
+      removeMutation.mutate(member.user_id);
   }
 
   if (ledgerQuery.isLoading || membersQuery.isLoading) {

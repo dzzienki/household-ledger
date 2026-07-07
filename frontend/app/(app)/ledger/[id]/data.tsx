@@ -4,7 +4,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { notify } from '@/lib/dialog';
 
 import { API_URL, ApiError, apiDownloadBlob, apiUpload } from '@/lib/api';
 import { ACCESS_TOKEN_KEY, storage } from '@/lib/storage';
@@ -47,12 +48,12 @@ export default function DataScreen() {
         if (await Sharing.isAvailableAsync()) {
           await Sharing.shareAsync(result.uri, { mimeType: 'text/csv', dialogTitle: 'CSV 내보내기' });
         } else {
-          Alert.alert('완료', `다운로드 위치: ${result.uri}`);
+          notify('완료', `다운로드 위치: ${result.uri}`);
         }
       }
     } catch (err) {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : (err as Error).message;
-      Alert.alert('내보내기 실패', msg);
+      notify('내보내기 실패', msg);
     } finally {
       setDownloading(false);
     }
@@ -81,7 +82,7 @@ export default function DataScreen() {
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : (err as Error).message;
-      Alert.alert('가져오기 실패', msg);
+      notify('가져오기 실패', msg);
     },
   });
 
@@ -97,7 +98,7 @@ export default function DataScreen() {
       const asset = result.assets[0];
       importMutation.mutate({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType });
     } catch (err) {
-      Alert.alert('파일 선택 실패', (err as Error).message);
+      notify('파일 선택 실패', (err as Error).message);
     } finally {
       setImporting(false);
     }

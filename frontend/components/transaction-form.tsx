@@ -1,7 +1,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { notify } from '@/lib/dialog';
 
 import { ApiError, api, apiUpload } from '@/lib/api';
 import { CURRENCIES } from '@/lib/currencies';
@@ -122,7 +123,7 @@ export function TransactionForm({
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : 'AI 호출 실패';
-      Alert.alert('AI 추천 실패', msg);
+      notify('AI 추천 실패', msg);
     },
   });
 
@@ -155,14 +156,14 @@ export function TransactionForm({
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '영수증 분석 실패';
-      Alert.alert('OCR 실패', msg);
+      notify('OCR 실패', msg);
     },
   });
 
   async function pickReceipt() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('권한 필요', '영수증 사진을 선택하려면 사진 접근 권한이 필요합니다');
+      notify('권한 필요', '영수증 사진을 선택하려면 사진 접근 권한이 필요합니다');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -179,11 +180,11 @@ export function TransactionForm({
   function handleSubmit() {
     const num = Number(amount);
     if (!num || num <= 0) {
-      Alert.alert('입력 오류', '금액을 입력하세요');
+      notify('입력 오류', '금액을 입력하세요');
       return;
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(transactionDate)) {
-      Alert.alert('입력 오류', '날짜는 YYYY-MM-DD 형식이어야 합니다');
+      notify('입력 오류', '날짜는 YYYY-MM-DD 형식이어야 합니다');
       return;
     }
     onSubmit({

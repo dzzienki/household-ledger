@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { confirmAsync, notify } from '@/lib/dialog';
 
 import { ApiError, api } from '@/lib/api';
 import { CATEGORY_COLOR_PALETTE } from '@/lib/colors';
@@ -30,15 +31,13 @@ export default function CategoriesScreen() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['categories', ledgerId] }),
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
-  function confirmDelete(category: Category) {
-    Alert.alert('카테고리 삭제', `"${category.name}" 카테고리를 삭제할까요? 연결된 거래는 미분류로 남습니다.`, [
-      { text: '취소', style: 'cancel' },
-      { text: '삭제', style: 'destructive', onPress: () => deleteMutation.mutate(category.id) },
-    ]);
+  async function confirmDelete(category: Category) {
+    if (await confirmAsync('카테고리 삭제', `"${category.name}" 카테고리를 삭제할까요? 연결된 거래는 미분류로 남습니다.`, { confirmText: '삭제', destructive: true }))
+      deleteMutation.mutate(category.id);
   }
 
   if (categoriesQuery.isLoading) {
@@ -167,7 +166,7 @@ function CategoryEditor({
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '저장 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 

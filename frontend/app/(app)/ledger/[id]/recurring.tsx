@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { confirmAsync, notify } from '@/lib/dialog';
 
 import { ApiError, api } from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
@@ -38,7 +39,7 @@ export default function RecurringScreen() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] }),
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
@@ -88,12 +89,10 @@ export default function RecurringScreen() {
                 </Text>
               </Pressable>
               <Pressable
-                onPress={() =>
-                  Alert.alert('반복 규칙 삭제', '삭제하시겠습니까?', [
-                    { text: '취소', style: 'cancel' },
-                    { text: '삭제', style: 'destructive', onPress: () => deleteMutation.mutate(item.id) },
-                  ])
-                }
+                onPress={async () => {
+                  if (await confirmAsync('반복 규칙 삭제', '삭제하시겠습니까?', { confirmText: '삭제', destructive: true }))
+                    deleteMutation.mutate(item.id);
+                }}
                 hitSlop={8}
               >
                 <Text style={styles.deleteIcon}>🗑️</Text>
@@ -178,21 +177,21 @@ function RecurringEditor({
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '저장 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
   function onSubmit() {
     if (!amount || Number(amount) <= 0) {
-      Alert.alert('입력 오류', '금액을 입력하세요');
+      notify('입력 오류', '금액을 입력하세요');
       return;
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-      Alert.alert('입력 오류', '시작일 형식: YYYY-MM-DD');
+      notify('입력 오류', '시작일 형식: YYYY-MM-DD');
       return;
     }
     if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
-      Alert.alert('입력 오류', '종료일 형식: YYYY-MM-DD');
+      notify('입력 오류', '종료일 형식: YYYY-MM-DD');
       return;
     }
     saveMutation.mutate();
