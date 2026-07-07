@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { confirmAsync, notify } from '@/lib/dialog';
 
 import { ApiError, api } from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
@@ -31,7 +32,7 @@ export default function BudgetsScreen() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['budgets', 'status', ledgerId] }),
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
@@ -68,12 +69,10 @@ export default function BudgetsScreen() {
                 </View>
                 <Pressable
                   hitSlop={8}
-                  onPress={() =>
-                    Alert.alert('예산 삭제', '예산을 삭제할까요?', [
-                      { text: '취소', style: 'cancel' },
-                      { text: '삭제', style: 'destructive', onPress: () => deleteMutation.mutate(item.id) },
-                    ])
-                  }
+                  onPress={async () => {
+                    if (await confirmAsync('예산 삭제', '예산을 삭제할까요?', { confirmText: '삭제', destructive: true }))
+                      deleteMutation.mutate(item.id);
+                  }}
                 >
                   <Text style={styles.deleteIcon}>🗑️</Text>
                 </Pressable>
@@ -152,7 +151,7 @@ function BudgetEditor({
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : (err as Error).message;
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 

@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { notify } from '@/lib/dialog';
 
 import { ApiError, api } from '@/lib/api';
 import { CURRENCIES } from '@/lib/currencies';
@@ -26,13 +27,13 @@ export default function NewLedgerScreen() {
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '생성 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
   function onSubmit() {
     if (!name.trim()) {
-      Alert.alert('입력 오류', '이름을 입력하세요');
+      notify('입력 오류', '이름을 입력하세요');
       return;
     }
     createMutation.mutate();

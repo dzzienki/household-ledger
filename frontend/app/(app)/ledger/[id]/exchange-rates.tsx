@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { notify } from '@/lib/dialog';
 
 import { ApiError, api } from '@/lib/api';
 import { CURRENCIES } from '@/lib/currencies';
@@ -35,7 +36,7 @@ export default function ExchangeRatesScreen() {
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
@@ -149,18 +150,18 @@ function RateEditor({
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '저장 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
   function submit() {
     const num = Number(rate);
     if (!currency) {
-      Alert.alert('입력 오류', '통화를 선택하세요');
+      notify('입력 오류', '통화를 선택하세요');
       return;
     }
     if (!num || num <= 0) {
-      Alert.alert('입력 오류', '환율은 0보다 커야 합니다');
+      notify('입력 오류', '환율은 0보다 커야 합니다');
       return;
     }
     mutation.mutate();

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Alert } from 'react-native';
+import { notify } from '@/lib/dialog';
 
 import { TransactionForm, type TransactionFormValue } from '@/components/transaction-form';
 import { ApiError, api } from '@/lib/api';
@@ -27,7 +27,7 @@ export default function NewTransactionScreen() {
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '거래 등록 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 

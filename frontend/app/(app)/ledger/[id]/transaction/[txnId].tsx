@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { ActivityIndicator, Alert, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
+import { confirmAsync, notify } from '@/lib/dialog';
 
 import { TransactionForm, type TransactionFormValue } from '@/components/transaction-form';
 import { ApiError, api } from '@/lib/api';
@@ -42,7 +43,7 @@ export default function EditTransactionScreen() {
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '수정 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
@@ -55,15 +56,13 @@ export default function EditTransactionScreen() {
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
-      Alert.alert('오류', msg);
+      notify('오류', msg);
     },
   });
 
-  function confirmDelete() {
-    Alert.alert('거래 삭제', '이 거래를 삭제할까요?', [
-      { text: '취소', style: 'cancel' },
-      { text: '삭제', style: 'destructive', onPress: () => deleteMutation.mutate() },
-    ]);
+  async function confirmDelete() {
+    if (await confirmAsync('거래 삭제', '이 거래를 삭제할까요?', { confirmText: '삭제', destructive: true }))
+      deleteMutation.mutate();
   }
 
   if (txnQuery.isLoading || categoriesQuery.isLoading || !txnQuery.data) {
