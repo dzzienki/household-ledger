@@ -1,9 +1,14 @@
-"""Parse Korean card/bank statement spreadsheets (.xls / .xlsx) into expense rows.
+"""Parse Korean card/bank statement spreadsheets (.xls / .xlsx) into ledger rows.
 
 Card companies export slightly different layouts, so instead of hard-coding one
 format we auto-detect the header row (the row that has a date-like, a
-merchant-like and an amount-like column) and map columns by keyword. Cancelled
-rows and zero/foreign-amount rows are skipped.
+merchant-like and an amount-like column) and map columns by keyword.
+
+Rules:
+- Domestic amount (국내...원) -> expense in KRW.
+- Foreign amount (해외...$) with no domestic amount -> expense in that currency.
+- Cancelled rows (상태 contains 취소) -> registered as INCOME (a refund), so they
+  offset the original charge and keep the balance correct.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ AMOUNT_EXCLUDE = ["해외", "$", "할인", "적립", "포인트", "예정", "잔
 class StatementRow:
     transaction_date: date
     amount: Decimal
+    currency: str
+    txn_type: str  # "expense" | "income"
     payee: str | None
     memo: str | None
 
@@ -32,8 +39,9 @@ class StatementRow:
 @dataclass
 class StatementParseResult:
     rows: list[StatementRow] = field(default_factory=list)
-    skipped_cancelled: int = 0
-    skipped_zero: int = 0
+    income_from_cancel: int = 0  # cancelled rows registered as income
+    foreign: int = 0  # rows registered in a non-KRW currency
+    skipped: int = 0  # rows with no usable amount
     errors: list[str] = field(default_factory=list)
 
 
@@ -47,7 +55,6 @@ def _load_grid(filename: str | None, data: bytes) -> list[list[object]]:
         return _grid_xlsx(data)
     if name.endswith(".xls"):
         return _grid_xls(data)
-    # Unknown extension — try the binary .xls format first, then .xlsx.
     try:
         return _grid_xls(data)
     except Exception:
@@ -106,6 +113,25 @@ def _pick(cells: list[str], keys: list[str], exclude: tuple[str, ...] = ()) -> i
     return best_idx
 
 
+def _find_foreign(cells: list[str]) -> tuple[int | None, str]:
+    """Return (column index of a foreign-amount column, its currency code)."""
+    for i, c in enumerate(cells):
+        if "해외" in c and ("금액" in c or "$" in c or "USD" in c.upper()):
+            return i, _currency_from_header(c)
+    return None, "USD"
+
+
+def _currency_from_header(header: str) -> str:
+    h = header.upper()
+    if "$" in header or "USD" in h or "달러" in header:
+        return "USD"
+    if "€" in header or "EUR" in h or "유로" in header:
+        return "EUR"
+    if "¥" in header or "JPY" in h or "엔" in header:
+        return "JPY"
+    return "USD"
+
+
 def _to_amount(value: object) -> Decimal:
     if isinstance(value, (int, float)):
         return Decimal(str(value))
@@ -133,7 +159,6 @@ def _to_date(value: object) -> date:
 
 
 def parse_statement(filename: str | None, data: bytes) -> StatementParseResult:
-    """Parse a statement spreadsheet into expense rows (KRW amounts)."""
     grid = _load_grid(filename, data)
     if not grid:
         raise ValueError("빈 파일입니다")
@@ -143,7 +168,8 @@ def parse_statement(filename: str | None, data: bytes) -> StatementParseResult:
     payee_col = _pick(cells, PAYEE_HEADERS, exclude=("카드", "고객"))
     amount_col = _pick(cells, AMOUNT_HEADERS, exclude=tuple(AMOUNT_EXCLUDE))
     status_col = _pick(cells, STATUS_HEADERS)
-    if date_col is None or amount_col is None:
+    foreign_col, foreign_currency = _find_foreign(cells)
+    if date_col is None or (amount_col is None and foreign_col is None):
         raise ValueError("날짜/금액 열을 인식하지 못했습니다")
 
     result = StatementParseResult()
@@ -152,21 +178,40 @@ def parse_statement(filename: str | None, data: bytes) -> StatementParseResult:
         if raw_date is None or (isinstance(raw_date, str) and not raw_date.strip()):
             continue
         try:
-            status = _norm(row[status_col]) if status_col is not None and status_col < len(row) else ""
-            if "취소" in status:
-                result.skipped_cancelled += 1
+            is_cancel = False
+            if status_col is not None and status_col < len(row):
+                is_cancel = "취소" in _norm(row[status_col])
+
+            krw = _to_amount(row[amount_col]) if amount_col is not None and amount_col < len(row) else Decimal(0)
+            fx = _to_amount(row[foreign_col]) if foreign_col is not None and foreign_col < len(row) else Decimal(0)
+
+            if krw > 0:
+                amount, currency, is_foreign = krw, "KRW", False
+            elif fx > 0:
+                amount, currency, is_foreign = fx, foreign_currency, True
+            else:
+                result.skipped += 1
                 continue
-            amount = _to_amount(row[amount_col] if amount_col < len(row) else 0)
-            if amount <= 0:
-                result.skipped_zero += 1
-                continue
+
             txn_date = _to_date(raw_date)
             payee = None
             if payee_col is not None and payee_col < len(row) and row[payee_col] not in (None, ""):
                 payee = str(row[payee_col]).strip()[:100]
+
             result.rows.append(
-                StatementRow(transaction_date=txn_date, amount=amount, payee=payee, memo=None)
+                StatementRow(
+                    transaction_date=txn_date,
+                    amount=amount,
+                    currency=currency,
+                    txn_type="income" if is_cancel else "expense",
+                    payee=payee,
+                    memo="카드 취소/환불" if is_cancel else None,
+                )
             )
+            if is_cancel:
+                result.income_from_cancel += 1
+            if is_foreign:
+                result.foreign += 1
         except (ValueError, InvalidOperation, TypeError) as exc:
             result.errors.append(f"{line_no}행: {exc}")
 
