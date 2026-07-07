@@ -14,3 +14,4 @@ class Budget(UUIDPKMixin, TimestampMixin, SQLModel, table=True):
     category_id: UUID | None = Field(default=None, foreign_key="categories.id", index=True)
     amount: Decimal = Field(sa_column=Column(Numeric(15, 2), nullable=False))
     currency: str = Field(default="KRW", max_length=3)
+    memo: str | None = Field(default=None, max_length=100)
