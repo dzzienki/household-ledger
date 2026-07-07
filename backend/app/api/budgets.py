@@ -107,6 +107,7 @@ async def budget_status(
                 remaining=remaining,
                 percent=round(percent, 1),
                 is_over=spent > amount,
+                memo=b.memo,
             )
         )
     return out

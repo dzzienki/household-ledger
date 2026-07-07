@@ -65,7 +65,10 @@ export default function BudgetsScreen() {
               <View style={styles.cardHeader}>
                 <View style={styles.cardLeft}>
                   <View style={[styles.colorDot, { backgroundColor: item.color }]} />
-                  <Text style={styles.cardName}>{item.category_name}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardName}>{item.category_name}</Text>
+                    {item.memo ? <Text style={styles.cardMemo}>{item.memo}</Text> : null}
+                  </View>
                 </View>
                 <Pressable
                   hitSlop={8}
@@ -131,6 +134,7 @@ function BudgetEditor({
   const queryClient = useQueryClient();
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
+  const [memo, setMemo] = useState('');
 
   const usedCategoryIds = new Set(existing.map((e) => e.category_id));
 
@@ -140,12 +144,13 @@ function BudgetEditor({
       if (!num || num <= 0) throw new Error('금액을 입력하세요');
       return api(`/api/ledgers/${ledgerId}/budgets`, {
         method: 'POST',
-        body: { category_id: categoryId, amount: num },
+        body: { category_id: categoryId, amount: num, memo: memo.trim() || null },
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['budgets', 'status', ledgerId] });
       setAmount('');
+      setMemo('');
       setCategoryId(null);
       onClose();
     },
@@ -206,6 +211,15 @@ function BudgetEditor({
             placeholder="0"
           />
 
+          <Text style={styles.label}>문구 (선택)</Text>
+          <TextInput
+            style={styles.input}
+            value={memo}
+            onChangeText={setMemo}
+            placeholder="예: 이번 달 외식비 아끼기"
+            maxLength={100}
+          />
+
           <View style={styles.actions}>
             <Pressable style={[styles.modalButton, styles.cancelButton]} onPress={onClose}>
               <Text style={styles.cancelText}>취소</Text>
@@ -239,6 +253,7 @@ const styles = StyleSheet.create({
   cardLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
   colorDot: { width: 12, height: 12, borderRadius: 6 },
   cardName: { fontSize: 15, fontWeight: '700' },
+  cardMemo: { fontSize: 12, color: '#6B7280', marginTop: 2 },
   deleteIcon: { fontSize: 16 },
   barBg: { height: 10, borderRadius: 5, backgroundColor: '#E5E7EB', overflow: 'hidden', marginBottom: 8 },
   barFill: { height: '100%' },

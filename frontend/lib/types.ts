@@ -98,6 +98,7 @@ export interface Budget {
   category_id: string | null;
   amount: string;
   currency: string;
+  memo: string | null;
   created_at: string;
 }
 
@@ -111,6 +112,7 @@ export interface BudgetStatus {
   remaining: string;
   percent: number;
   is_over: boolean;
+  memo: string | null;
 }
 
 export interface CategorySuggestion {
