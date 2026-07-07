@@ -31,6 +31,11 @@ export default function EditTransactionScreen() {
     queryClient.invalidateQueries({ queryKey: ['stats'] });
   }
 
+  // router.back() 은 웹에서 히스토리가 없으면 무동작이라, 목록으로 확실히 이동시킨다.
+  function goToList() {
+    router.replace(`/(app)/ledger/${ledgerId}`);
+  }
+
   const updateMutation = useMutation({
     mutationFn: (body: TransactionFormValue) =>
       api<Transaction>(`/api/ledgers/${ledgerId}/transactions/${txnId}`, {
@@ -39,7 +44,7 @@ export default function EditTransactionScreen() {
       }),
     onSuccess: () => {
       invalidate();
-      router.back();
+      goToList();
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '수정 실패';
@@ -52,7 +57,8 @@ export default function EditTransactionScreen() {
       api(`/api/ledgers/${ledgerId}/transactions/${txnId}`, { method: 'DELETE' }),
     onSuccess: () => {
       invalidate();
-      router.back();
+      notify('완료', '삭제되었습니다');
+      goToList();
     },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
