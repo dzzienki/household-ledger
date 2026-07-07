@@ -1,6 +1,6 @@
 import { Link, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -12,19 +12,25 @@ export default function SignupScreen() {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit() {
-    if (!email || !name || password.length < 8) {
-      Alert.alert('입력 오류', '비밀번호는 8자 이상이어야 합니다');
+    setError(null);
+    if (!email.trim() || !name.trim()) {
+      setError('이메일과 이름을 입력하세요');
+      return;
+    }
+    if (password.length < 8) {
+      setError('비밀번호는 8자 이상이어야 합니다');
       return;
     }
     setSubmitting(true);
     try {
       await signUp(email.trim(), name.trim(), password);
-      router.replace('/(app)');
+      // 가입 성공 → 로그인 페이지로 이동 (안내 배너 표시)
+      router.replace('/(auth)/login?registered=1');
     } catch (err) {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '회원가입에 실패했습니다';
-      Alert.alert('회원가입 실패', msg);
+      setError(err instanceof ApiError ? String(err.detail ?? err.message) : '회원가입에 실패했습니다');
     } finally {
       setSubmitting(false);
     }
@@ -60,6 +66,8 @@ export default function SignupScreen() {
           value={password}
           onChangeText={setPassword}
         />
+
+        {error && <Text style={styles.error}>{error}</Text>}
 
         <Pressable
           style={[styles.button, submitting && styles.buttonDisabled]}
@@ -100,4 +108,5 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   link: { textAlign: 'center', marginTop: 20, color: '#3B82F6' },
+  error: { color: '#DC2626', fontSize: 14, marginBottom: 8, textAlign: 'center' },
 });
