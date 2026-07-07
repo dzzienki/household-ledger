@@ -174,7 +174,7 @@ function BudgetEditor({
               disabled={usedCategoryIds.has(null)}
             >
               <Text style={[styles.scopeText, categoryId === null && styles.scopeTextActive]}>
-                전체 지출 {usedCategoryIds.has(null) ? '(사용 중)' : ''}
+                전체 지출(총액){usedCategoryIds.has(null) ? ' · 사용 중' : ''}
               </Text>
             </Pressable>
           </View>

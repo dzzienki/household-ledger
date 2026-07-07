@@ -88,7 +88,7 @@ async def budget_status(
     for b in budgets:
         if b.category_id is None:
             spent = total_expense
-            cat_name, color = "전체 지출", "#1F2937"
+            cat_name, color = "전체 지출(총액)", "#1F2937"
         else:
             spent = spend_by_cat.get(b.category_id, Decimal(0))
             cat_name, color = name_color.get(b.category_id, ("(삭제됨)", "#9CA3AF"))
