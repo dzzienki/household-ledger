@@ -38,6 +38,19 @@ export interface Category {
   created_at: string;
 }
 
+export interface Tag {
+  id: string;
+  ledger_id: string;
+  name: string;
+  color: string;
+  created_at: string;
+}
+
+export interface ExchangeRate {
+  currency: string;
+  rate_to_base: string;
+}
+
 export interface Transaction {
   id: string;
   ledger_id: string;
@@ -49,6 +62,7 @@ export interface Transaction {
   transaction_date: string;
   payee: string | null;
   memo: string | null;
+  tags: Tag[];
   created_at: string;
 }
 

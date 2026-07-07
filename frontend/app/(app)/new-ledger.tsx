@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ApiError, api } from '@/lib/api';
+import { CURRENCIES } from '@/lib/currencies';
 import type { Ledger, LedgerType } from '@/lib/types';
 
 export default function NewLedgerScreen() {
@@ -11,12 +12,13 @@ export default function NewLedgerScreen() {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [type, setType] = useState<LedgerType>('shared');
+  const [currency, setCurrency] = useState('KRW');
 
   const createMutation = useMutation({
     mutationFn: () =>
       api<Ledger>('/api/ledgers', {
         method: 'POST',
-        body: { name: name.trim(), type, currency: 'KRW' },
+        body: { name: name.trim(), type, currency },
       }),
     onSuccess: (ledger) => {
       queryClient.invalidateQueries({ queryKey: ['ledgers'] });
@@ -67,6 +69,21 @@ export default function NewLedgerScreen() {
         ))}
       </View>
 
+      <Text style={styles.label}>기준 통화</Text>
+      <View style={styles.currencyRow}>
+        {CURRENCIES.map((c) => (
+          <Pressable
+            key={c.code}
+            style={[styles.chip, currency === c.code && styles.chipActive]}
+            onPress={() => setCurrency(c.code)}
+          >
+            <Text style={[styles.chipText, currency === c.code && styles.chipTextActive]}>
+              {c.code}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
       <Pressable
         style={[styles.submit, createMutation.isPending && { opacity: 0.6 }]}
         disabled={createMutation.isPending}
@@ -106,6 +123,18 @@ const styles = StyleSheet.create({
   typeTitleActive: { color: '#1E40AF' },
   typeDesc: { fontSize: 13, color: '#6B7280', marginTop: 4 },
   typeDescActive: { color: '#1E40AF' },
+  currencyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#F9FAFB',
+  },
+  chipActive: { backgroundColor: '#1F2937', borderColor: '#1F2937' },
+  chipText: { fontSize: 14, fontWeight: '600', color: '#374151' },
+  chipTextActive: { color: '#fff' },
   submit: {
     marginTop: 32,
     backgroundColor: '#3B82F6',

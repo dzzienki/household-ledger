@@ -5,6 +5,9 @@
 *.pem
 *.key
 
+# Deploy (server-specific config; keep the example committed)
+deploy/config.env
+
 # Python
 __pycache__/
 *.py[cod]
