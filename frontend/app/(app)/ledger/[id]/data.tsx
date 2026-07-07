@@ -18,8 +18,9 @@ interface ImportResult {
 
 interface StatementResult {
   imported: number;
-  skipped_cancelled: number;
-  skipped_foreign: number;
+  income_from_cancel: number;
+  foreign: number;
+  skipped: number;
   errors: string[];
 }
 
@@ -221,8 +222,8 @@ export default function DataScreen() {
         <Text style={styles.cardTitle}>카드 이용내역(엑셀) 가져오기</Text>
         <Text style={styles.cardHint}>
           카드사에서 받은 이용내역 엑셀(.xls/.xlsx)을 올리면 지출로 일괄 등록됩니다. 컬럼은
-          자동 인식하며, 취소·해외(원화 외) 건은 제외됩니다. 카테고리는 미분류로 등록되니 이후
-          분류하세요.
+          자동 인식하며, 취소 건은 환불(수입)로, 해외 건은 해당 통화로 등록됩니다. 카테고리는
+          미분류로 등록되니 이후 분류하세요.
         </Text>
         <Pressable
           style={[styles.button, styles.secondary, (pickingStatement || statementMutation.isPending) && { opacity: 0.6 }]}
@@ -240,8 +241,9 @@ export default function DataScreen() {
           <View style={styles.resultBox}>
             <Text style={styles.resultText}>
               ✓ 등록 {statementResult.imported}건
-              {statementResult.skipped_cancelled > 0 ? ` · 취소 제외 ${statementResult.skipped_cancelled}` : ''}
-              {statementResult.skipped_foreign > 0 ? ` · 해외 제외 ${statementResult.skipped_foreign}` : ''}
+              {statementResult.income_from_cancel > 0 ? ` · 취소→수입 ${statementResult.income_from_cancel}` : ''}
+              {statementResult.foreign > 0 ? ` · 외화 ${statementResult.foreign}` : ''}
+              {statementResult.skipped > 0 ? ` · 제외 ${statementResult.skipped}` : ''}
             </Text>
             {statementResult.errors.length > 0 && (
               <>

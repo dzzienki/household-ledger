@@ -181,9 +181,9 @@ async def import_statement(
                 ledger_id=ledger.id,
                 category_id=None,
                 created_by_id=member.user_id,
-                type=TransactionType.EXPENSE,
+                type=TransactionType(row.txn_type),
                 amount=row.amount,
-                currency=ledger.currency,
+                currency=row.currency,
                 transaction_date=row.transaction_date,
                 payee=row.payee,
                 memo=row.memo,
@@ -193,7 +193,8 @@ async def import_statement(
 
     return {
         "imported": len(result.rows),
-        "skipped_cancelled": result.skipped_cancelled,
-        "skipped_foreign": result.skipped_zero,
+        "income_from_cancel": result.income_from_cancel,
+        "foreign": result.foreign,
+        "skipped": result.skipped,
         "errors": result.errors,
     }
