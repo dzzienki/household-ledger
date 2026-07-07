@@ -16,12 +16,21 @@ interface ImportResult {
   errors: string[];
 }
 
+interface StatementResult {
+  imported: number;
+  skipped_cancelled: number;
+  skipped_foreign: number;
+  errors: string[];
+}
+
 export default function DataScreen() {
   const { id: ledgerId } = useLocalSearchParams<{ id: string }>();
   const queryClient = useQueryClient();
   const [downloading, setDownloading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [lastResult, setLastResult] = useState<ImportResult | null>(null);
+  const [pickingStatement, setPickingStatement] = useState(false);
+  const [statementResult, setStatementResult] = useState<StatementResult | null>(null);
 
   async function exportCsv() {
     setDownloading(true);
@@ -104,6 +113,55 @@ export default function DataScreen() {
     }
   }
 
+  const statementMutation = useMutation({
+    mutationFn: async (file: { uri: string; name: string; mimeType?: string }): Promise<StatementResult> => {
+      const formData = new FormData();
+      if (Platform.OS === 'web') {
+        const res = await fetch(file.uri);
+        const blob = await res.blob();
+        formData.append('file', blob, file.name);
+      } else {
+        formData.append('file', {
+          uri: file.uri,
+          name: file.name,
+          type: file.mimeType || 'application/vnd.ms-excel',
+        } as any);
+      }
+      return apiUpload<StatementResult>(`/api/ledgers/${ledgerId}/import-statement`, formData);
+    },
+    onSuccess: (result) => {
+      setStatementResult(result);
+      queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['stats'] });
+    },
+    onError: (err) => {
+      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : (err as Error).message;
+      notify('가져오기 실패', msg);
+    },
+  });
+
+  async function importStatement() {
+    setPickingStatement(true);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          '*/*',
+        ],
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      statementMutation.mutate({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType });
+    } catch (err) {
+      notify('파일 선택 실패', (err as Error).message);
+    } finally {
+      setPickingStatement(false);
+    }
+  }
+
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: '데이터 가져오기/내보내기' }} />
@@ -149,6 +207,46 @@ export default function DataScreen() {
               <>
                 <Text style={styles.errorTitle}>건너뛴 줄 ({lastResult.errors.length}):</Text>
                 {lastResult.errors.slice(0, 5).map((e, i) => (
+                  <Text key={i} style={styles.errorLine}>
+                    • {e}
+                  </Text>
+                ))}
+              </>
+            )}
+          </View>
+        )}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>카드 이용내역(엑셀) 가져오기</Text>
+        <Text style={styles.cardHint}>
+          카드사에서 받은 이용내역 엑셀(.xls/.xlsx)을 올리면 지출로 일괄 등록됩니다. 컬럼은
+          자동 인식하며, 취소·해외(원화 외) 건은 제외됩니다. 카테고리는 미분류로 등록되니 이후
+          분류하세요.
+        </Text>
+        <Pressable
+          style={[styles.button, styles.secondary, (pickingStatement || statementMutation.isPending) && { opacity: 0.6 }]}
+          disabled={pickingStatement || statementMutation.isPending}
+          onPress={importStatement}
+        >
+          {pickingStatement || statementMutation.isPending ? (
+            <ActivityIndicator color="#1F2937" />
+          ) : (
+            <Text style={styles.secondaryText}>🧾 엑셀 파일 선택</Text>
+          )}
+        </Pressable>
+
+        {statementResult && (
+          <View style={styles.resultBox}>
+            <Text style={styles.resultText}>
+              ✓ 등록 {statementResult.imported}건
+              {statementResult.skipped_cancelled > 0 ? ` · 취소 제외 ${statementResult.skipped_cancelled}` : ''}
+              {statementResult.skipped_foreign > 0 ? ` · 해외 제외 ${statementResult.skipped_foreign}` : ''}
+            </Text>
+            {statementResult.errors.length > 0 && (
+              <>
+                <Text style={styles.errorTitle}>건너뛴 줄 ({statementResult.errors.length}):</Text>
+                {statementResult.errors.slice(0, 5).map((e, i) => (
                   <Text key={i} style={styles.errorLine}>
                     • {e}
                   </Text>

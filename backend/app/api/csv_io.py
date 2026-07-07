@@ -4,7 +4,6 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 from urllib.parse import quote
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -13,6 +12,7 @@ from sqlmodel import select
 from app.api.deps import DbDep, get_ledger_membership, require_role
 from app.models import Category, Ledger, LedgerMember, LedgerRole, Transaction
 from app.models.category import TransactionType
+from app.services.statement import parse_statement
 
 router = APIRouter(prefix="/ledgers/{ledger_id}", tags=["csv"])
 
@@ -142,4 +142,58 @@ async def import_csv(
         "imported": imported,
         "categories_created": len(new_categories),
         "errors": errors,
+    }
+
+
+@router.post("/import-statement")
+async def import_statement(
+    file: UploadFile,
+    db: DbDep,
+    membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
+) -> dict[str, int | list[str]]:
+    """Import a card/bank statement spreadsheet (.xls/.xlsx) as expense transactions.
+
+    Columns are auto-detected; every valid row becomes an EXPENSE in the ledger's
+    base currency, left uncategorized (미분류). Cancelled and non-KRW rows are skipped.
+    """
+    ledger, member = membership
+
+    name = (file.filename or "").lower()
+    if not (name.endswith(".xls") or name.endswith(".xlsx")):
+        raise HTTPException(status_code=400, detail="엑셀 파일(.xls 또는 .xlsx)만 가능합니다")
+
+    data = await file.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="파일이 너무 큽니다 (최대 5MB)")
+
+    try:
+        result = parse_statement(file.filename, data)
+    except Exception as exc:  # noqa: BLE001 — surface any parse failure as a 400
+        raise HTTPException(status_code=400, detail=f"엑셀 분석 실패: {exc}") from exc
+
+    if not result.rows:
+        detail = "등록할 거래를 찾지 못했습니다. 카드 이용내역 엑셀 형식인지 확인하세요."
+        raise HTTPException(status_code=400, detail=detail)
+
+    for row in result.rows:
+        db.add(
+            Transaction(
+                ledger_id=ledger.id,
+                category_id=None,
+                created_by_id=member.user_id,
+                type=TransactionType.EXPENSE,
+                amount=row.amount,
+                currency=ledger.currency,
+                transaction_date=row.transaction_date,
+                payee=row.payee,
+                memo=row.memo,
+            )
+        )
+    await db.commit()
+
+    return {
+        "imported": len(result.rows),
+        "skipped_cancelled": result.skipped_cancelled,
+        "skipped_foreign": result.skipped_zero,
+        "errors": result.errors,
     }

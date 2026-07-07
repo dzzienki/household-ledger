@@ -5,6 +5,11 @@
 *.pem
 *.key
 
+# Personal statement / spreadsheet samples (never commit financial data)
+doc/*.xls
+doc/*.xlsx
+doc/*.csv
+
 # Python
 __pycache__/
 *.py[cod]
