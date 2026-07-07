@@ -172,7 +172,7 @@ export default function LedgerDetailScreen() {
       </View>
       <View style={styles.quickRow}>
         <QuickButton label="환율" onPress={() => router.push(`/(app)/ledger/${id}/exchange-rates`)} />
-        <QuickButton label="CSV" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
+        <QuickButton label="파일 가져오기" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
         <View style={styles.quickSpacer} />
       </View>
 
