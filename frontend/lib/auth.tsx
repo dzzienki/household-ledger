@@ -55,20 +55,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refreshUser();
   }, [refreshUser]);
 
+  // Creates the account only — the user then logs in on the login screen.
   const signUp = useCallback(async (email: string, name: string, password: string) => {
     await api('/api/auth/signup', {
       method: 'POST',
       body: { email, name, password },
       auth: false,
     });
-    const tokens = await api<AuthTokens>('/api/auth/login', {
-      method: 'POST',
-      body: { email, password },
-      auth: false,
-    });
-    await persistTokens(tokens);
-    await refreshUser();
-  }, [refreshUser]);
+  }, []);
 
   const signOut = useCallback(async () => {
     await clearTokens();

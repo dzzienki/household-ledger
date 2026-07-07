@@ -1,6 +1,6 @@
-import { Link, useRouter } from 'expo-router';
+import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -8,19 +8,24 @@ import { useAuth } from '@/lib/auth';
 export default function LoginScreen() {
   const { signIn } = useAuth();
   const router = useRouter();
+  const { registered } = useLocalSearchParams<{ registered?: string }>();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit() {
-    if (!email || !password) return;
+    setError(null);
+    if (!email.trim() || !password) {
+      setError('이메일과 비밀번호를 입력하세요');
+      return;
+    }
     setSubmitting(true);
     try {
       await signIn(email.trim(), password);
       router.replace('/(app)');
     } catch (err) {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '로그인에 실패했습니다';
-      Alert.alert('로그인 실패', msg);
+      setError(err instanceof ApiError ? String(err.detail ?? err.message) : '로그인에 실패했습니다');
     } finally {
       setSubmitting(false);
     }
@@ -33,6 +38,10 @@ export default function LoginScreen() {
     >
       <View style={styles.inner}>
         <Text style={styles.title}>가계부 로그인</Text>
+
+        {registered && (
+          <Text style={styles.success}>회원가입이 완료됐습니다. 로그인해 주세요.</Text>
+        )}
 
         <TextInput
           style={styles.input}
@@ -50,6 +59,8 @@ export default function LoginScreen() {
           value={password}
           onChangeText={setPassword}
         />
+
+        {error && <Text style={styles.error}>{error}</Text>}
 
         <Pressable
           style={[styles.button, submitting && styles.buttonDisabled]}
@@ -90,4 +101,6 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   link: { textAlign: 'center', marginTop: 20, color: '#3B82F6' },
+  error: { color: '#DC2626', fontSize: 14, marginBottom: 8, textAlign: 'center' },
+  success: { color: '#16A34A', fontSize: 14, marginBottom: 16, textAlign: 'center' },
 });
