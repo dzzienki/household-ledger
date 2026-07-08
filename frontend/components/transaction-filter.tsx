@@ -1,67 +1,21 @@
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { Category, Tag, TransactionType } from '@/lib/types';
-
-export type DateRangePreset = 'all' | 'thisMonth' | 'lastMonth' | 'last3Months' | 'thisYear' | 'custom';
 
 export interface TransactionFilterState {
   type: TransactionType | 'all';
   categoryId: string | null;
   tagId: string | null;
-  range: DateRangePreset;
-  customStart: string;
-  customEnd: string;
 }
 
 export const DEFAULT_FILTER: TransactionFilterState = {
   type: 'all',
   categoryId: null,
   tagId: null,
-  range: 'all',
-  customStart: '',
-  customEnd: '',
-};
-
-const RANGE_LABEL: Record<DateRangePreset, string> = {
-  all: '전체 기간',
-  thisMonth: '이번 달',
-  lastMonth: '지난 달',
-  last3Months: '최근 3개월',
-  thisYear: '올해',
-  custom: '직접 지정',
 };
 
 export function isFilterActive(f: TransactionFilterState): boolean {
-  return f.type !== 'all' || f.categoryId !== null || f.tagId !== null || f.range !== 'all';
-}
-
-export function resolveRange(f: TransactionFilterState): { start?: string; end?: string } {
-  const today = new Date();
-  const startOfDay = (d: Date) => d.toISOString().slice(0, 10);
-
-  switch (f.range) {
-    case 'thisMonth': {
-      const s = new Date(today.getFullYear(), today.getMonth(), 1);
-      return { start: startOfDay(s), end: startOfDay(today) };
-    }
-    case 'lastMonth': {
-      const s = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      const e = new Date(today.getFullYear(), today.getMonth(), 0);
-      return { start: startOfDay(s), end: startOfDay(e) };
-    }
-    case 'last3Months': {
-      const s = new Date(today.getFullYear(), today.getMonth() - 2, 1);
-      return { start: startOfDay(s), end: startOfDay(today) };
-    }
-    case 'thisYear': {
-      const s = new Date(today.getFullYear(), 0, 1);
-      return { start: startOfDay(s), end: startOfDay(today) };
-    }
-    case 'custom':
-      return { start: f.customStart || undefined, end: f.customEnd || undefined };
-    default:
-      return {};
-  }
+  return f.type !== 'all' || f.categoryId !== null || f.tagId !== null;
 }
 
 interface Props {
@@ -117,46 +71,6 @@ export function TransactionFilterSheet({ visible, value, categories, tags, onCha
                 </Pressable>
               ))}
             </View>
-
-            <Text style={styles.label}>기간</Text>
-            <View style={styles.row}>
-              {(Object.keys(RANGE_LABEL) as DateRangePreset[]).map((r) => (
-                <Pressable
-                  key={r}
-                  style={[styles.chip, value.range === r && styles.chipActive]}
-                  onPress={() => onChange({ ...value, range: r })}
-                >
-                  <Text style={[styles.chipText, value.range === r && styles.chipTextActive]}>
-                    {RANGE_LABEL[r]}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-
-            {value.range === 'custom' && (
-              <View style={styles.customDateRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.subLabel}>시작</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="YYYY-MM-DD"
-                    autoCapitalize="none"
-                    value={value.customStart}
-                    onChangeText={(v) => onChange({ ...value, customStart: v })}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.subLabel}>끝</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="YYYY-MM-DD"
-                    autoCapitalize="none"
-                    value={value.customEnd}
-                    onChangeText={(v) => onChange({ ...value, customEnd: v })}
-                  />
-                </View>
-              </View>
-            )}
 
             <Text style={styles.label}>카테고리</Text>
             <View style={styles.row}>
@@ -256,7 +170,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '700' },
   clearText: { color: '#6B7280', fontWeight: '600' },
   label: { fontSize: 13, color: '#6B7280', marginTop: 16, marginBottom: 8, fontWeight: '700' },
-  subLabel: { fontSize: 12, color: '#6B7280', marginBottom: 4, fontWeight: '600' },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 14,
@@ -267,15 +180,6 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: '#1F2937' },
   chipText: { fontWeight: '600', color: '#6B7280' },
   chipTextActive: { color: '#fff' },
-  customDateRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  input: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 10,
-    fontSize: 14,
-    backgroundColor: '#F9FAFB',
-  },
   applyButton: {
     backgroundColor: '#3B82F6',
     paddingVertical: 14,

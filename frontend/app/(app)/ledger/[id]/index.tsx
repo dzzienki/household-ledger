@@ -7,7 +7,6 @@ import {
   DEFAULT_FILTER,
   TransactionFilterSheet,
   isFilterActive,
-  resolveRange,
   type TransactionFilterState,
 } from '@/components/transaction-filter';
 import { api } from '@/lib/api';
@@ -25,18 +24,41 @@ export default function LedgerDetailScreen() {
   const [filter, setFilter] = useState<TransactionFilterState>(DEFAULT_FILTER);
   const [filterOpen, setFilterOpen] = useState(false);
 
+  // Month scope: home shows one month at a time (arrows to move). "전체" turns it off.
+  const [monthMode, setMonthMode] = useState(true);
+  const [viewMonth, setViewMonth] = useState(() => {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), 1);
+  });
+
+  const monthLabel = `${viewMonth.getFullYear()}년 ${viewMonth.getMonth() + 1}월`;
+  const isCurrentMonth = useMemo(() => {
+    const n = new Date();
+    return viewMonth.getFullYear() === n.getFullYear() && viewMonth.getMonth() === n.getMonth();
+  }, [viewMonth]);
+
+  function shiftMonth(delta: number) {
+    setMonthMode(true);
+    setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() + delta, 1));
+  }
+
   const queryParams = useMemo(() => {
     const params = new URLSearchParams();
     if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
     if (filter.type !== 'all') params.set('type', filter.type);
     if (filter.categoryId) params.set('category_id', filter.categoryId);
     if (filter.tagId) params.set('tag_id', filter.tagId);
-    const range = resolveRange(filter);
-    if (range.start) params.set('start_date', range.start);
-    if (range.end) params.set('end_date', range.end);
+    if (monthMode) {
+      const iso = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const start = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+      const end = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0);
+      params.set('start_date', iso(start));
+      params.set('end_date', iso(end));
+    }
     const qs = params.toString();
     return qs ? `?${qs}` : '';
-  }, [debouncedSearch, filter]);
+  }, [debouncedSearch, filter, monthMode, viewMonth]);
 
   const ledgerQuery = useQuery({
     queryKey: ['ledger', id],
@@ -114,6 +136,35 @@ export default function LedgerDetailScreen() {
         }}
       />
 
+      <View style={styles.monthBar}>
+        <Pressable
+          style={styles.monthArrow}
+          onPress={() => shiftMonth(-1)}
+          disabled={!monthMode}
+          hitSlop={8}
+        >
+          <Text style={[styles.monthArrowText, !monthMode && styles.monthDim]}>◀</Text>
+        </Pressable>
+        <Pressable style={styles.monthCenter} onPress={() => shiftMonth(0)}>
+          <Text style={styles.monthLabel}>{monthMode ? monthLabel : '전체 기간'}</Text>
+          {monthMode && !isCurrentMonth && <Text style={styles.monthToday}>이번 달로</Text>}
+        </Pressable>
+        <Pressable
+          style={styles.monthArrow}
+          onPress={() => shiftMonth(1)}
+          disabled={!monthMode}
+          hitSlop={8}
+        >
+          <Text style={[styles.monthArrowText, !monthMode && styles.monthDim]}>▶</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.monthAllButton, !monthMode && styles.monthAllButtonActive]}
+          onPress={() => setMonthMode((v) => !v)}
+        >
+          <Text style={[styles.monthAllText, !monthMode && styles.monthAllTextActive]}>전체</Text>
+        </Pressable>
+      </View>
+
       <View style={styles.summary}>
         <View style={styles.summaryItem}>
           <Text style={styles.summaryLabel}>수입{filterActive ? ' (필터)' : ''}</Text>
@@ -168,11 +219,11 @@ export default function LedgerDetailScreen() {
       <View style={styles.quickRow}>
         <QuickButton label="반복 거래" onPress={() => router.push(`/(app)/ledger/${id}/recurring`)} />
         <QuickButton label="통계" onPress={() => router.push(`/(app)/ledger/${id}/stats`)} />
-        <View style={styles.quickSpacer} />
+        <QuickButton label="환율" onPress={() => router.push(`/(app)/ledger/${id}/exchange-rates`)} />
       </View>
       <View style={styles.quickRow}>
-        <QuickButton label="환율" onPress={() => router.push(`/(app)/ledger/${id}/exchange-rates`)} />
         <QuickButton label="파일 가져오기" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
+        <View style={styles.quickSpacer} />
         <View style={styles.quickSpacer} />
       </View>
 
@@ -227,7 +278,11 @@ export default function LedgerDetailScreen() {
           }}
           ListEmptyComponent={
             <Text style={styles.empty}>
-              {filterActive ? '검색 조건에 맞는 거래가 없습니다' : '아직 거래가 없습니다'}
+              {filterActive
+                ? '검색 조건에 맞는 거래가 없습니다'
+                : monthMode
+                  ? `${monthLabel}에 거래가 없습니다`
+                  : '아직 거래가 없습니다'}
             </Text>
           }
         />
@@ -266,6 +321,28 @@ const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   errorText: { color: '#DC2626' },
   headerLink: { color: '#3B82F6', fontWeight: '600', marginRight: 12 },
+  monthBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    gap: 8,
+  },
+  monthArrow: { paddingHorizontal: 10, paddingVertical: 4 },
+  monthArrowText: { fontSize: 16, color: '#374151', fontWeight: '700' },
+  monthDim: { color: '#D1D5DB' },
+  monthCenter: { flex: 1, alignItems: 'center' },
+  monthLabel: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  monthToday: { fontSize: 11, color: '#3B82F6', marginTop: 1 },
+  monthAllButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  monthAllButtonActive: { backgroundColor: '#1F2937' },
+  monthAllText: { fontWeight: '700', color: '#6B7280', fontSize: 13 },
+  monthAllTextActive: { color: '#fff' },
   summary: {
     flexDirection: 'row',
     backgroundColor: '#F9FAFB',
