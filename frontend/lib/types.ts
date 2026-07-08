@@ -89,6 +89,9 @@ export interface RecurringTransaction {
   end_date: string | null;
   next_due_date: string;
   active: boolean;
+  checked_funded: boolean;
+  checked_paid: boolean;
+  checked_amount: boolean;
   created_at: string;
 }
 

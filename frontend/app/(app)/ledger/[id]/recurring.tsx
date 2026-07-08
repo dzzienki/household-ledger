@@ -23,6 +23,14 @@ const FREQ_LABEL: Record<RecurrenceFrequency, string> = {
   yearly: '매년',
 };
 
+type ChecklistField = 'checked_funded' | 'checked_paid' | 'checked_amount';
+
+const CHECKLIST: { key: ChecklistField; label: string }[] = [
+  { key: 'checked_funded', label: '이체' },
+  { key: 'checked_paid', label: '납부' },
+  { key: 'checked_amount', label: '금액' },
+];
+
 export default function RecurringScreen() {
   const { id: ledgerId } = useLocalSearchParams<{ id: string }>();
   const queryClient = useQueryClient();
@@ -51,6 +59,19 @@ export default function RecurringScreen() {
     },
   });
 
+  const checklistMutation = useMutation({
+    mutationFn: ({ id, field, value }: { id: string; field: ChecklistField; value: boolean }) =>
+      api(`/api/ledgers/${ledgerId}/recurring/${id}/checklist`, {
+        method: 'PATCH',
+        body: { [field]: value },
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] }),
+    onError: (err) => {
+      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '변경 실패';
+      notify('오류', msg);
+    },
+  });
+
   const categoriesById = new Map((categoriesQuery.data ?? []).map((c) => [c.id, c]));
 
   if (rulesQuery.isLoading) {
@@ -70,31 +91,58 @@ export default function RecurringScreen() {
         keyExtractor={(r) => r.id}
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+        ListHeaderComponent={
+          (rulesQuery.data ?? []).length > 0 ? (
+            <Text style={styles.legend}>
+              자동이체 체크리스트 — 이체(통장에 입금) · 납부(출금 완료) · 금액(고지서 대조). 매 회차마다
+              자동으로 초기화됩니다.
+            </Text>
+          ) : null
+        }
         renderItem={({ item }) => {
           const cat = item.category_id ? categoriesById.get(item.category_id) : null;
           return (
             <View style={[styles.row, !item.active && { opacity: 0.55 }]}>
-              <Pressable style={{ flex: 1 }} onPress={() => setEditing(item)}>
-                <View style={styles.rowTopLine}>
-                  <View style={[styles.colorDot, { backgroundColor: cat?.color ?? '#9CA3AF' }]} />
-                  <Text style={styles.rowTitle}>
-                    {item.payee || cat?.name || '(미분류)'}
+              <View style={{ flex: 1 }}>
+                <Pressable onPress={() => setEditing(item)}>
+                  <View style={styles.rowTopLine}>
+                    <View style={[styles.colorDot, { backgroundColor: cat?.color ?? '#9CA3AF' }]} />
+                    <Text style={styles.rowTitle}>
+                      {item.payee || cat?.name || '(미분류)'}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.amount,
+                        { color: item.type === 'income' ? '#16A34A' : '#DC2626' },
+                      ]}
+                    >
+                      {item.type === 'income' ? '+' : '-'}
+                      {formatCurrency(item.amount, item.currency)}
+                    </Text>
+                  </View>
+                  <Text style={styles.rowMeta}>
+                    {describeSchedule(item.frequency, item.start_date)} · 다음: {item.next_due_date}
+                    {!item.active ? ' · 비활성' : ''}
                   </Text>
-                  <Text
-                    style={[
-                      styles.amount,
-                      { color: item.type === 'income' ? '#16A34A' : '#DC2626' },
-                    ]}
-                  >
-                    {item.type === 'income' ? '+' : '-'}
-                    {formatCurrency(item.amount, item.currency)}
-                  </Text>
+                </Pressable>
+                <View style={styles.checkRow}>
+                  {CHECKLIST.map((c) => {
+                    const on = item[c.key];
+                    return (
+                      <Pressable
+                        key={c.key}
+                        style={[styles.checkChip, on && styles.checkChipOn]}
+                        onPress={() => checklistMutation.mutate({ id: item.id, field: c.key, value: !on })}
+                        hitSlop={4}
+                      >
+                        <Text style={[styles.checkText, on && styles.checkTextOn]}>
+                          {on ? '✓' : '○'} {c.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
                 </View>
-                <Text style={styles.rowMeta}>
-                  {describeSchedule(item.frequency, item.start_date)} · 다음: {item.next_due_date}
-                  {!item.active ? ' · 비활성' : ''}
-                </Text>
-              </Pressable>
+              </View>
               <Pressable
                 onPress={async () => {
                   if (await confirmAsync('반복 규칙 삭제', '삭제하시겠습니까?', { confirmText: '삭제', destructive: true }))
@@ -411,7 +459,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   row: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     padding: 14,
     backgroundColor: '#F9FAFB',
     borderRadius: 10,
@@ -422,6 +470,19 @@ const styles = StyleSheet.create({
   rowTitle: { fontSize: 15, fontWeight: '600', flex: 1 },
   amount: { fontSize: 15, fontWeight: '700' },
   rowMeta: { fontSize: 12, color: '#6B7280', marginTop: 4, marginLeft: 18 },
+  checkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10, marginLeft: 18 },
+  checkChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#fff',
+  },
+  checkChipOn: { backgroundColor: '#DCFCE7', borderColor: '#16A34A' },
+  checkText: { fontSize: 12, fontWeight: '600', color: '#6B7280' },
+  checkTextOn: { color: '#15803D' },
+  legend: { fontSize: 12, color: '#6B7280', lineHeight: 18, marginBottom: 12 },
   deleteIcon: { fontSize: 18, paddingHorizontal: 4 },
   empty: { color: '#9CA3AF', textAlign: 'center', marginTop: 40 },
   fab: {
