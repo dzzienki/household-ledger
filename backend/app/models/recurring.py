@@ -37,3 +37,10 @@ class RecurringTransaction(UUIDPKMixin, TimestampMixin, SQLModel, table=True):
     end_date: date | None = Field(default=None)
     next_due_date: date = Field(index=True)
     active: bool = Field(default=True)
+
+    # Per-cycle autopay checklist. Reset automatically each cycle by comparing
+    # checklist_period to the current period key (see api/recurring.py).
+    checked_funded: bool = Field(default=False)  # 이체: 자동이체 통장에 입금
+    checked_paid: bool = Field(default=False)  # 납부: 실제 출금 완료
+    checked_amount: bool = Field(default=False)  # 금액: 고지서 대조
+    checklist_period: str | None = Field(default=None, max_length=10)

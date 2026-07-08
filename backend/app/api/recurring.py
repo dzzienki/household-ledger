@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Annotated
 from uuid import UUID
 
@@ -6,11 +7,46 @@ from sqlmodel import select
 
 from app.api.deps import DbDep, get_ledger_membership, require_role
 from app.models import Category, Ledger, LedgerMember, LedgerRole, RecurringTransaction
-from app.schemas.recurring import RecurringCreate, RecurringPublic, RecurringUpdate
+from app.models.recurring import RecurrenceFrequency
+from app.schemas.recurring import (
+    RecurringChecklistUpdate,
+    RecurringCreate,
+    RecurringPublic,
+    RecurringUpdate,
+)
 
 router = APIRouter(prefix="/ledgers/{ledger_id}/recurring", tags=["recurring"])
 
 CanWrite = require_role(LedgerRole.OWNER, LedgerRole.EDITOR)
+
+
+def _checklist_period_key(frequency: RecurrenceFrequency, today: date) -> str:
+    """A short key identifying the current checklist cycle for a rule.
+
+    The autopay checklist resets each cycle: monthly bills reset every calendar
+    month, yearly every year, and so on. Keying off today (not next_due_date)
+    keeps the checklist stable through the due date so 'paid' can be ticked."""
+    if frequency == RecurrenceFrequency.YEARLY:
+        return today.strftime("%Y")
+    if frequency == RecurrenceFrequency.WEEKLY:
+        iso = today.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+    if frequency == RecurrenceFrequency.DAILY:
+        return today.isoformat()
+    return today.strftime("%Y-%m")
+
+
+def _reset_if_stale(rule: RecurringTransaction, today: date) -> bool:
+    """Clear the checklist when the rule has rolled into a new cycle. Returns
+    True if the rule was modified."""
+    key = _checklist_period_key(rule.frequency, today)
+    if rule.checklist_period == key:
+        return False
+    rule.checked_funded = False
+    rule.checked_paid = False
+    rule.checked_amount = False
+    rule.checklist_period = key
+    return True
 
 
 async def _validate_category(db, ledger_id: UUID, category_id: UUID | None, txn_type) -> None:
@@ -34,7 +70,18 @@ async def list_recurring(
         .where(RecurringTransaction.ledger_id == ledger.id)
         .order_by(RecurringTransaction.active.desc(), RecurringTransaction.next_due_date)
     )
-    return list((await db.exec(stmt)).all())
+    rules = list((await db.exec(stmt)).all())
+
+    today = date.today()
+    changed = False
+    for rule in rules:
+        if _reset_if_stale(rule, today):
+            db.add(rule)
+            changed = True
+    if changed:
+        await db.commit()
+
+    return rules
 
 
 @router.post("", response_model=RecurringPublic, status_code=status.HTTP_201_CREATED)
@@ -82,6 +129,31 @@ async def update_recurring(
     if "start_date" in data:
         rule.next_due_date = data["start_date"]
 
+    db.add(rule)
+    await db.commit()
+    await db.refresh(rule)
+    return rule
+
+
+@router.patch("/{recurring_id}/checklist", response_model=RecurringPublic)
+async def update_checklist(
+    recurring_id: UUID,
+    payload: RecurringChecklistUpdate,
+    db: DbDep,
+    membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
+) -> RecurringTransaction:
+    ledger, _ = membership
+    rule = await db.get(RecurringTransaction, recurring_id)
+    if rule is None or rule.ledger_id != ledger.id:
+        raise HTTPException(status_code=404, detail="Recurring rule not found")
+
+    # Roll the checklist over first if we've entered a new cycle, then apply the
+    # toggles so a check made in the new period isn't wiped.
+    _reset_if_stale(rule, date.today())
+
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(rule, key, value)
     db.add(rule)
     await db.commit()
     await db.refresh(rule)

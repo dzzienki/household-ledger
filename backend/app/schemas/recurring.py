@@ -33,6 +33,12 @@ class RecurringUpdate(BaseModel):
     active: bool | None = None
 
 
+class RecurringChecklistUpdate(BaseModel):
+    checked_funded: bool | None = None
+    checked_paid: bool | None = None
+    checked_amount: bool | None = None
+
+
 class RecurringPublic(BaseModel):
     id: UUID
     ledger_id: UUID
@@ -48,6 +54,9 @@ class RecurringPublic(BaseModel):
     end_date: date | None
     next_due_date: date
     active: bool
+    checked_funded: bool
+    checked_paid: bool
+    checked_amount: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
