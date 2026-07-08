@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { confirmAsync, notify } from '@/lib/dialog';
 
+import { AmountInput } from '@/components/amount-input';
 import { ApiError, api } from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
 import type { Category, RecurrenceFrequency, RecurringTransaction, TransactionType } from '@/lib/types';
@@ -222,7 +223,7 @@ function RecurringEditor({
             </View>
 
             <Text style={styles.label}>금액</Text>
-            <TextInput style={styles.input} keyboardType="numeric" value={amount} onChangeText={setAmount} />
+            <AmountInput style={styles.input} value={amount} onChangeText={setAmount} />
 
             <Text style={styles.label}>주기</Text>
             <View style={styles.freqRow}>

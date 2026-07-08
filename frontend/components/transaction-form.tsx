@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { notify } from '@/lib/dialog';
 
+import { AmountInput } from '@/components/amount-input';
 import { ApiError, api, apiUpload } from '@/lib/api';
 import { CURRENCIES } from '@/lib/currencies';
 import type { CategorySuggestion, Category, Ledger, ReceiptExtraction, Tag, Transaction, TransactionType } from '@/lib/types';
@@ -232,9 +233,8 @@ export function TransactionForm({
       </View>
 
       <Text style={styles.label}>금액</Text>
-      <TextInput
+      <AmountInput
         style={styles.input}
-        keyboardType="numeric"
         placeholder="0"
         value={amount}
         onChangeText={setAmount}
