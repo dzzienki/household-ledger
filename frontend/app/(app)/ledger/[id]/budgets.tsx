@@ -1,23 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { confirmAsync, notify } from '@/lib/dialog';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { AmountInput } from '@/components/amount-input';
 import { ApiError, api } from '@/lib/api';
+import { CATEGORY_COLOR_PALETTE } from '@/lib/colors';
+import { confirmAsync, notify } from '@/lib/dialog';
 import { formatCurrency } from '@/lib/format';
-import type { BudgetStatus, Category } from '@/lib/types';
+import type { BudgetStatus, Category, TransactionType } from '@/lib/types';
+
+type CatEditing = { mode: 'create'; type: TransactionType } | { mode: 'edit'; category: Category };
+type BudgetEditing = { categoryId: string | null; name: string; existing: BudgetStatus | null };
 
 export default function BudgetsScreen() {
   const { id: ledgerId } = useLocalSearchParams<{ id: string }>();
   const queryClient = useQueryClient();
-
-  const statusQuery = useQuery({
-    queryKey: ['budgets', 'status', ledgerId],
-    queryFn: () => api<BudgetStatus[]>(`/api/ledgers/${ledgerId}/budgets/status`),
-    enabled: !!ledgerId,
-  });
 
   const categoriesQuery = useQuery({
     queryKey: ['categories', ledgerId],
@@ -25,19 +32,45 @@ export default function BudgetsScreen() {
     enabled: !!ledgerId,
   });
 
-  const [editingId, setEditingId] = useState<'new' | string | null>(null);
+  const statusQuery = useQuery({
+    queryKey: ['budgets', 'status', ledgerId],
+    queryFn: () => api<BudgetStatus[]>(`/api/ledgers/${ledgerId}/budgets/status`),
+    enabled: !!ledgerId,
+  });
 
-  const deleteMutation = useMutation({
-    mutationFn: (bid: string) =>
-      api(`/api/ledgers/${ledgerId}/budgets/${bid}`, { method: 'DELETE' }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['budgets', 'status', ledgerId] }),
+  const [catEditing, setCatEditing] = useState<CatEditing | null>(null);
+  const [budgetEditing, setBudgetEditing] = useState<BudgetEditing | null>(null);
+
+  const expense = (categoriesQuery.data ?? []).filter((c) => c.type === 'expense');
+  const income = (categoriesQuery.data ?? []).filter((c) => c.type === 'income');
+  const statusByCat = new Map((statusQuery.data ?? []).map((s) => [s.category_id, s]));
+  const totalBudget = statusByCat.get(null) ?? null;
+
+  const deleteCategoryMutation = useMutation({
+    mutationFn: (categoryId: string) =>
+      api(`/api/ledgers/${ledgerId}/categories/${categoryId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['categories', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['budgets', 'status', ledgerId] });
+    },
     onError: (err) => {
       const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
       notify('오류', msg);
     },
   });
 
-  if (statusQuery.isLoading) {
+  async function confirmDeleteCategory(category: Category) {
+    if (
+      await confirmAsync(
+        '카테고리 삭제',
+        `"${category.name}" 카테고리를 삭제할까요? 연결된 거래는 미분류로 남습니다.`,
+        { confirmText: '삭제', destructive: true },
+      )
+    )
+      deleteCategoryMutation.mutate(category.id);
+  }
+
+  if (categoriesQuery.isLoading || statusQuery.isLoading) {
     return (
       <View style={styles.center}>
         <ActivityIndicator />
@@ -47,112 +80,257 @@ export default function BudgetsScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: '예산 관리' }} />
+      <Stack.Screen options={{ title: '예산 · 카테고리' }} />
 
-      <FlatList
-        data={statusQuery.data ?? []}
-        keyExtractor={(b) => b.id}
-        contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
-        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-        ListHeaderComponent={
-          <Text style={styles.headerHint}>
-            이번 달 기준입니다. 카테고리별 또는 전체 지출에 대한 예산을 설정할 수 있습니다.
-          </Text>
-        }
-        renderItem={({ item }) => {
-          const pct = Math.min(100, item.percent);
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+        <Text style={styles.hint}>
+          카테고리를 추가하고, 지출 카테고리에는 이번 달 예산을 설정할 수 있어요. 진행률은 이번 달
+          기준입니다.
+        </Text>
+
+        {/* 지출 */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>지출</Text>
+          <Pressable onPress={() => setCatEditing({ mode: 'create', type: 'expense' })} hitSlop={8}>
+            <Text style={styles.addText}>+ 항목</Text>
+          </Pressable>
+        </View>
+
+        {/* 전체 지출(총액) 예산 */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardLeft}>
+              <View style={[styles.colorDot, { backgroundColor: '#1F2937' }]} />
+              <Text style={styles.cardName}>전체 지출(총액)</Text>
+            </View>
+          </View>
+          <BudgetInline
+            status={totalBudget}
+            onPress={() =>
+              setBudgetEditing({ categoryId: null, name: '전체 지출(총액)', existing: totalBudget })
+            }
+          />
+        </View>
+
+        {expense.length === 0 && <Text style={styles.empty}>지출 카테고리가 없습니다</Text>}
+        {expense.map((c) => {
+          const status = statusByCat.get(c.id) ?? null;
           return (
-            <View style={styles.card}>
+            <View key={c.id} style={styles.card}>
               <View style={styles.cardHeader}>
-                <View style={styles.cardLeft}>
-                  <View style={[styles.colorDot, { backgroundColor: item.color }]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.cardName}>{item.category_name}</Text>
-                    {item.memo ? <Text style={styles.cardMemo}>{item.memo}</Text> : null}
-                  </View>
-                </View>
-                <Pressable
-                  hitSlop={8}
-                  onPress={async () => {
-                    if (await confirmAsync('예산 삭제', '예산을 삭제할까요?', { confirmText: '삭제', destructive: true }))
-                      deleteMutation.mutate(item.id);
-                  }}
-                >
+                <Pressable style={styles.cardLeft} onPress={() => setCatEditing({ mode: 'edit', category: c })}>
+                  <View style={[styles.colorDot, { backgroundColor: c.color }]} />
+                  <Text style={styles.cardName}>{c.name}</Text>
+                  <Text style={styles.editHint}>✎</Text>
+                </Pressable>
+                <Pressable onPress={() => confirmDeleteCategory(c)} hitSlop={8}>
                   <Text style={styles.deleteIcon}>🗑️</Text>
                 </Pressable>
               </View>
-              <View style={styles.barBg}>
-                <View
-                  style={[
-                    styles.barFill,
-                    { width: `${pct}%`, backgroundColor: item.is_over ? '#DC2626' : item.percent > 80 ? '#F59E0B' : '#3B82F6' },
-                  ]}
-                />
-              </View>
-              <View style={styles.cardFooter}>
-                <Text style={styles.amountUsed}>
-                  {formatCurrency(item.spent)} / {formatCurrency(item.amount)}
-                </Text>
-                <Text style={[styles.percent, item.is_over && { color: '#DC2626' }]}>
-                  {item.percent.toFixed(1)}%
-                  {item.is_over ? ' 초과!' : ''}
-                </Text>
-              </View>
+              <BudgetInline
+                status={status}
+                onPress={() => setBudgetEditing({ categoryId: c.id, name: c.name, existing: status })}
+              />
             </View>
           );
-        }}
-        ListEmptyComponent={<Text style={styles.empty}>설정된 예산이 없습니다</Text>}
-      />
+        })}
 
-      <Pressable style={styles.fab} onPress={() => setEditingId('new')}>
-        <Text style={styles.fabText}>+ 예산 추가</Text>
-      </Pressable>
+        {/* 수입 */}
+        <View style={[styles.sectionHeader, { marginTop: 24 }]}>
+          <Text style={styles.sectionTitle}>수입</Text>
+          <Pressable onPress={() => setCatEditing({ mode: 'create', type: 'income' })} hitSlop={8}>
+            <Text style={styles.addText}>+ 항목</Text>
+          </Pressable>
+        </View>
 
-      <BudgetEditor
-        ledgerId={ledgerId!}
-        categories={(categoriesQuery.data ?? []).filter((c) => c.type === 'expense')}
-        existing={statusQuery.data ?? []}
-        editing={editingId}
-        onClose={() => setEditingId(null)}
-      />
+        {income.length === 0 && <Text style={styles.empty}>수입 카테고리가 없습니다</Text>}
+        {income.map((c) => (
+          <View key={c.id} style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Pressable style={styles.cardLeft} onPress={() => setCatEditing({ mode: 'edit', category: c })}>
+                <View style={[styles.colorDot, { backgroundColor: c.color }]} />
+                <Text style={styles.cardName}>{c.name}</Text>
+                <Text style={styles.editHint}>✎</Text>
+              </Pressable>
+              <Pressable onPress={() => confirmDeleteCategory(c)} hitSlop={8}>
+                <Text style={styles.deleteIcon}>🗑️</Text>
+              </Pressable>
+            </View>
+          </View>
+        ))}
+      </ScrollView>
+
+      {catEditing && (
+        <CategoryEditor
+          key={catEditing.mode === 'edit' ? catEditing.category.id : `new-${catEditing.type}`}
+          ledgerId={ledgerId!}
+          editing={catEditing}
+          onClose={() => setCatEditing(null)}
+        />
+      )}
+
+      {budgetEditing && (
+        <BudgetEditor
+          key={budgetEditing.categoryId ?? 'total'}
+          ledgerId={ledgerId!}
+          editing={budgetEditing}
+          onClose={() => setBudgetEditing(null)}
+        />
+      )}
     </View>
+  );
+}
+
+function BudgetInline({ status, onPress }: { status: BudgetStatus | null; onPress: () => void }) {
+  if (!status) {
+    return (
+      <Pressable style={styles.addBudget} onPress={onPress}>
+        <Text style={styles.addBudgetText}>+ 예산 설정</Text>
+      </Pressable>
+    );
+  }
+  const pct = Math.min(100, status.percent);
+  const barColor = status.is_over ? '#DC2626' : status.percent > 80 ? '#F59E0B' : '#3B82F6';
+  return (
+    <Pressable onPress={onPress}>
+      {status.memo ? <Text style={styles.budgetMemo}>{status.memo}</Text> : null}
+      <View style={styles.barBg}>
+        <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: barColor }]} />
+      </View>
+      <View style={styles.budgetFooter}>
+        <Text style={styles.amountUsed}>
+          {formatCurrency(status.spent)} / {formatCurrency(status.amount)}
+        </Text>
+        <Text style={[styles.percent, status.is_over && { color: '#DC2626' }]}>
+          {status.percent.toFixed(1)}%{status.is_over ? ' 초과!' : ''}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function CategoryEditor({
+  ledgerId,
+  editing,
+  onClose,
+}: {
+  ledgerId: string;
+  editing: CatEditing;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const isEdit = editing.mode === 'edit';
+  const initial = editing.mode === 'edit' ? editing.category : null;
+
+  const [name, setName] = useState(initial?.name ?? '');
+  const [color, setColor] = useState(initial?.color ?? CATEGORY_COLOR_PALETTE[0]);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      if (editing.mode === 'create') {
+        await api(`/api/ledgers/${ledgerId}/categories`, {
+          method: 'POST',
+          body: { name, type: editing.type, color },
+        });
+      } else {
+        await api(`/api/ledgers/${ledgerId}/categories/${editing.category.id}`, {
+          method: 'PATCH',
+          body: { name, color },
+        });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['categories', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['budgets', 'status', ledgerId] });
+      onClose();
+    },
+    onError: (err) => {
+      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '저장 실패';
+      notify('오류', msg);
+    },
+  });
+
+  const addingType = editing.mode === 'create' ? editing.type : null;
+
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
+          <Text style={styles.modalTitle}>
+            {isEdit ? '카테고리 수정' : `${addingType === 'expense' ? '지출' : '수입'} 카테고리 추가`}
+          </Text>
+
+          <Text style={styles.label}>이름</Text>
+          <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="예: 식비" />
+
+          <Text style={styles.label}>색상</Text>
+          <View style={styles.palette}>
+            {CATEGORY_COLOR_PALETTE.map((c) => (
+              <Pressable
+                key={c}
+                onPress={() => setColor(c)}
+                style={[styles.swatch, { backgroundColor: c }, color === c && styles.swatchSelected]}
+              />
+            ))}
+          </View>
+
+          <View style={styles.modalActions}>
+            <Pressable style={[styles.modalButton, styles.cancelButton]} onPress={onClose}>
+              <Text style={styles.cancelText}>취소</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modalButton, styles.saveButton, mutation.isPending && { opacity: 0.6 }]}
+              disabled={mutation.isPending || !name.trim()}
+              onPress={() => mutation.mutate()}
+            >
+              {mutation.isPending ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.saveText}>{isEdit ? '저장' : '추가'}</Text>
+              )}
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
 function BudgetEditor({
   ledgerId,
-  categories,
-  existing,
   editing,
   onClose,
 }: {
   ledgerId: string;
-  categories: Category[];
-  existing: BudgetStatus[];
-  editing: 'new' | string | null;
+  editing: BudgetEditing;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [amount, setAmount] = useState('');
-  const [memo, setMemo] = useState('');
+  const existing = editing.existing;
+  const [amount, setAmount] = useState(existing ? String(Number(existing.amount)) : '');
+  const [memo, setMemo] = useState(existing?.memo ?? '');
 
-  const usedCategoryIds = new Set(existing.map((e) => e.category_id));
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['budgets', 'status', ledgerId] });
+  };
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       const num = Number(amount);
       if (!num || num <= 0) throw new Error('금액을 입력하세요');
+      if (existing) {
+        return api(`/api/ledgers/${ledgerId}/budgets/${existing.id}`, {
+          method: 'PATCH',
+          body: { amount: num, memo: memo.trim() || null },
+        });
+      }
       return api(`/api/ledgers/${ledgerId}/budgets`, {
         method: 'POST',
-        body: { category_id: categoryId, amount: num, memo: memo.trim() || null },
+        body: { category_id: editing.categoryId, amount: num, memo: memo.trim() || null },
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['budgets', 'status', ledgerId] });
-      setAmount('');
-      setMemo('');
-      setCategoryId(null);
+      invalidate();
       onClose();
     },
     onError: (err) => {
@@ -161,55 +339,31 @@ function BudgetEditor({
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: () => api(`/api/ledgers/${ledgerId}/budgets/${existing!.id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      invalidate();
+      onClose();
+    },
+    onError: (err) => {
+      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
+      notify('오류', msg);
+    },
+  });
+
+  async function askDelete() {
+    if (await confirmAsync('예산 삭제', `"${editing.name}" 예산을 삭제할까요?`, { confirmText: '삭제', destructive: true }))
+      deleteMutation.mutate();
+  }
+
   return (
-    <Modal visible={editing === 'new'} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
         <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
-          <Text style={styles.modalTitle}>예산 추가</Text>
-
-          <Text style={styles.label}>대상</Text>
-          <View style={styles.scopeRow}>
-            <Pressable
-              style={[styles.scopeButton, categoryId === null && styles.scopeButtonActive]}
-              onPress={() => setCategoryId(null)}
-              disabled={usedCategoryIds.has(null)}
-            >
-              <Text style={[styles.scopeText, categoryId === null && styles.scopeTextActive]}>
-                전체 지출(총액){usedCategoryIds.has(null) ? ' · 사용 중' : ''}
-              </Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.categoryRow}>
-            {categories.map((c) => {
-              const used = usedCategoryIds.has(c.id);
-              return (
-                <Pressable
-                  key={c.id}
-                  style={[
-                    styles.chip,
-                    { borderColor: c.color },
-                    categoryId === c.id && { backgroundColor: c.color },
-                    used && { opacity: 0.4 },
-                  ]}
-                  disabled={used}
-                  onPress={() => setCategoryId(c.id)}
-                >
-                  <Text style={[styles.chipText, categoryId === c.id && { color: '#fff' }]}>
-                    {c.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          <Text style={styles.modalTitle}>{editing.name} 예산</Text>
 
           <Text style={styles.label}>월 예산 금액 (KRW)</Text>
-          <AmountInput
-            style={styles.input}
-            value={amount}
-            onChangeText={setAmount}
-            placeholder="0"
-          />
+          <AmountInput style={styles.input} value={amount} onChangeText={setAmount} placeholder="0" />
 
           <Text style={styles.label}>문구 (선택)</Text>
           <TextInput
@@ -220,7 +374,7 @@ function BudgetEditor({
             maxLength={100}
           />
 
-          <View style={styles.actions}>
+          <View style={styles.modalActions}>
             <Pressable style={[styles.modalButton, styles.cancelButton]} onPress={onClose}>
               <Text style={styles.cancelText}>취소</Text>
             </Pressable>
@@ -229,9 +383,19 @@ function BudgetEditor({
               disabled={saveMutation.isPending || !amount}
               onPress={() => saveMutation.mutate()}
             >
-              {saveMutation.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>추가</Text>}
+              {saveMutation.isPending ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.saveText}>{existing ? '저장' : '추가'}</Text>
+              )}
             </Pressable>
           </View>
+
+          {existing && (
+            <Pressable style={styles.deleteButton} onPress={askDelete}>
+              <Text style={styles.deleteButtonText}>예산 삭제</Text>
+            </Pressable>
+          )}
         </Pressable>
       </Pressable>
     </Modal>
@@ -241,53 +405,42 @@ function BudgetEditor({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
-  headerHint: { color: '#6B7280', fontSize: 13, marginBottom: 12 },
+  hint: { color: '#6B7280', fontSize: 13, marginBottom: 16, lineHeight: 19 },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  sectionTitle: { fontSize: 17, fontWeight: '700' },
+  addText: { color: '#3B82F6', fontWeight: '700', fontSize: 15 },
+  empty: { color: '#9CA3AF', paddingVertical: 8 },
   card: {
     padding: 14,
     backgroundColor: '#F9FAFB',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    marginBottom: 10,
   },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   cardLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  colorDot: { width: 12, height: 12, borderRadius: 6 },
+  colorDot: { width: 14, height: 14, borderRadius: 7 },
   cardName: { fontSize: 15, fontWeight: '700' },
-  cardMemo: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  editHint: { fontSize: 12, color: '#9CA3AF' },
   deleteIcon: { fontSize: 16 },
-  barBg: { height: 10, borderRadius: 5, backgroundColor: '#E5E7EB', overflow: 'hidden', marginBottom: 8 },
+  addBudget: { marginTop: 10 },
+  addBudgetText: { color: '#3B82F6', fontWeight: '600', fontSize: 14 },
+  budgetMemo: { fontSize: 12, color: '#6B7280', marginTop: 10, marginBottom: 2 },
+  barBg: { height: 10, borderRadius: 5, backgroundColor: '#E5E7EB', overflow: 'hidden', marginTop: 10, marginBottom: 8 },
   barFill: { height: '100%' },
-  cardFooter: { flexDirection: 'row', justifyContent: 'space-between' },
+  budgetFooter: { flexDirection: 'row', justifyContent: 'space-between' },
   amountUsed: { fontSize: 13, color: '#374151' },
   percent: { fontSize: 13, fontWeight: '700', color: '#374151' },
-  empty: { color: '#9CA3AF', textAlign: 'center', marginTop: 40 },
-  fab: {
-    position: 'absolute',
-    bottom: 24,
-    alignSelf: 'center',
-    backgroundColor: '#3B82F6',
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 28,
-  },
-  fabText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modalCard: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 20, paddingBottom: 32 },
   modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 12 },
   label: { fontSize: 13, color: '#6B7280', marginTop: 12, marginBottom: 6, fontWeight: '600' },
-  scopeRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
-  scopeButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#F3F4F6',
-  },
-  scopeButtonActive: { backgroundColor: '#1F2937' },
-  scopeText: { fontWeight: '600', color: '#6B7280' },
-  scopeTextActive: { color: '#fff' },
-  categoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5 },
-  chipText: { fontSize: 14, fontWeight: '600', color: '#374151' },
   input: {
     borderWidth: 1,
     borderColor: '#D1D5DB',
@@ -296,10 +449,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: '#F9FAFB',
   },
-  actions: { flexDirection: 'row', gap: 12, marginTop: 24 },
+  palette: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 },
+  swatch: { width: 32, height: 32, borderRadius: 16 },
+  swatchSelected: { borderWidth: 3, borderColor: '#1F2937' },
+  modalActions: { flexDirection: 'row', gap: 12, marginTop: 24 },
   modalButton: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
   cancelButton: { backgroundColor: '#F3F4F6' },
   cancelText: { color: '#6B7280', fontWeight: '600' },
   saveButton: { backgroundColor: '#3B82F6' },
   saveText: { color: '#fff', fontWeight: '700' },
+  deleteButton: {
+    marginTop: 12,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+  },
+  deleteButtonText: { color: '#DC2626', fontSize: 15, fontWeight: '700' },
 });
