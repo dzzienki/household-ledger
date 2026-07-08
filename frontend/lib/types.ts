@@ -81,6 +81,7 @@ export interface RecurringTransaction {
   type: TransactionType;
   amount: string;
   currency: string;
+  title: string | null;
   payee: string | null;
   memo: string | null;
   frequency: RecurrenceFrequency;
