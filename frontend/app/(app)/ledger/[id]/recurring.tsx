@@ -108,7 +108,7 @@ export default function RecurringScreen() {
                   <View style={styles.rowTopLine}>
                     <View style={[styles.colorDot, { backgroundColor: cat?.color ?? '#9CA3AF' }]} />
                     <Text style={styles.rowTitle}>
-                      {item.payee || cat?.name || '(미분류)'}
+                      {item.title || item.payee || cat?.name || '(제목 없음)'}
                     </Text>
                     <Text
                       style={[
@@ -124,6 +124,12 @@ export default function RecurringScreen() {
                     {describeSchedule(item.frequency, item.start_date)} · 다음: {item.next_due_date}
                     {!item.active ? ' · 비활성' : ''}
                   </Text>
+                  {item.payee ? (
+                    <Text style={styles.rowPayee}>
+                      <Text style={styles.rowFieldLabel}>거래처</Text> {item.payee}
+                    </Text>
+                  ) : null}
+                  {item.memo ? <Text style={styles.rowMemo}>{item.memo}</Text> : null}
                 </Pressable>
                 <View style={styles.checkRow}>
                   {CHECKLIST.map((c) => {
@@ -213,6 +219,7 @@ function RecurringEditor({
 
   const [type, setType] = useState<TransactionType>(initial?.type ?? 'expense');
   const [amount, setAmount] = useState(initial ? String(Number(initial.amount)) : '');
+  const [title, setTitle] = useState(initial?.title ?? '');
   const [payee, setPayee] = useState(initial?.payee ?? '');
   const [memo, setMemo] = useState(initial?.memo ?? '');
   const [categoryId, setCategoryId] = useState<string | null>(initial?.category_id ?? null);
@@ -233,6 +240,7 @@ function RecurringEditor({
         type,
         amount: Number(amount),
         category_id: categoryId,
+        title: title.trim() || null,
         payee: payee.trim() || null,
         memo: memo.trim() || null,
         frequency,
@@ -414,6 +422,15 @@ function RecurringEditor({
               )}
             </View>
 
+            <Text style={styles.label}>제목</Text>
+            <TextInput
+              style={styles.input}
+              value={title}
+              onChangeText={setTitle}
+              placeholder="예: 넷플릭스 구독"
+              maxLength={100}
+            />
+
             <Text style={styles.label}>거래처</Text>
             <TextInput style={styles.input} value={payee} onChangeText={setPayee} placeholder="예: Netflix" />
 
@@ -470,6 +487,9 @@ const styles = StyleSheet.create({
   rowTitle: { fontSize: 15, fontWeight: '600', flex: 1 },
   amount: { fontSize: 15, fontWeight: '700' },
   rowMeta: { fontSize: 12, color: '#6B7280', marginTop: 4, marginLeft: 18 },
+  rowPayee: { fontSize: 12, color: '#4B5563', marginTop: 3, marginLeft: 18 },
+  rowFieldLabel: { color: '#9CA3AF', fontWeight: '700' },
+  rowMemo: { fontSize: 11, color: '#9CA3AF', marginTop: 2, marginLeft: 18 },
   checkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10, marginLeft: 18 },
   checkChip: {
     paddingHorizontal: 10,

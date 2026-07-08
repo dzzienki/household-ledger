@@ -13,6 +13,7 @@ class RecurringCreate(BaseModel):
     type: TransactionType
     amount: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
     currency: str = Field(default="KRW", min_length=3, max_length=3)
+    title: str | None = Field(default=None, max_length=100)
     payee: str | None = Field(default=None, max_length=100)
     memo: str | None = Field(default=None, max_length=500)
     frequency: RecurrenceFrequency
@@ -24,6 +25,7 @@ class RecurringCreate(BaseModel):
 class RecurringUpdate(BaseModel):
     category_id: UUID | None = None
     amount: Decimal | None = Field(default=None, gt=0, max_digits=15, decimal_places=2)
+    title: str | None = Field(default=None, max_length=100)
     payee: str | None = Field(default=None, max_length=100)
     memo: str | None = Field(default=None, max_length=500)
     frequency: RecurrenceFrequency | None = None
@@ -46,6 +48,7 @@ class RecurringPublic(BaseModel):
     type: TransactionType
     amount: Decimal
     currency: str
+    title: str | None
     payee: str | None
     memo: str | None
     frequency: RecurrenceFrequency

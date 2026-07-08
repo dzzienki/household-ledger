@@ -28,6 +28,7 @@ class RecurringTransaction(UUIDPKMixin, TimestampMixin, SQLModel, table=True):
     amount: Decimal = Field(sa_column=Column(Numeric(15, 2), nullable=False))
     currency: str = Field(default="KRW", max_length=3)
 
+    title: str | None = Field(default=None, max_length=100)
     payee: str | None = Field(default=None, max_length=100)
     memo: str | None = Field(default=None, max_length=500)
 
