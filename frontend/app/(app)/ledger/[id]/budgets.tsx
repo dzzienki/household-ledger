@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { confirmAsync, notify } from '@/lib/dialog';
 
+import { AmountInput } from '@/components/amount-input';
 import { ApiError, api } from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
 import type { BudgetStatus, Category } from '@/lib/types';
@@ -203,9 +204,8 @@ function BudgetEditor({
           </View>
 
           <Text style={styles.label}>월 예산 금액 (KRW)</Text>
-          <TextInput
+          <AmountInput
             style={styles.input}
-            keyboardType="numeric"
             value={amount}
             onChangeText={setAmount}
             placeholder="0"
