@@ -7,6 +7,13 @@ import { confirmAsync, notify } from '@/lib/dialog';
 import { AmountInput } from '@/components/amount-input';
 import { ApiError, api } from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
+import {
+  WEEKDAYS,
+  computeStartDate,
+  describeSchedule,
+  monthMaxDay,
+  scheduleFromDate,
+} from '@/lib/recurrence';
 import type { Category, RecurrenceFrequency, RecurringTransaction, TransactionType } from '@/lib/types';
 
 const FREQ_LABEL: Record<RecurrenceFrequency, string> = {
@@ -84,8 +91,7 @@ export default function RecurringScreen() {
                   </Text>
                 </View>
                 <Text style={styles.rowMeta}>
-                  {FREQ_LABEL[item.frequency]}
-                  {item.interval > 1 ? ` × ${item.interval}` : ''} · 다음: {item.next_due_date}
+                  {describeSchedule(item.frequency, item.start_date)} · 다음: {item.next_due_date}
                   {!item.active ? ' · 비활성' : ''}
                 </Text>
               </Pressable>
@@ -110,12 +116,30 @@ export default function RecurringScreen() {
         <Text style={styles.fabText}>+ 반복 거래 추가</Text>
       </Pressable>
 
-      <RecurringEditor
-        ledgerId={ledgerId!}
-        categories={categoriesQuery.data ?? []}
-        editing={editing}
-        onClose={() => setEditing(null)}
-      />
+      {editing && (
+        <RecurringEditor
+          key={editing === 'new' ? 'new' : editing.id}
+          ledgerId={ledgerId!}
+          categories={categoriesQuery.data ?? []}
+          editing={editing}
+          onClose={() => setEditing(null)}
+          onDelete={
+            editing !== 'new'
+              ? async () => {
+                  if (
+                    await confirmAsync('반복 규칙 삭제', '삭제하시겠습니까?', {
+                      confirmText: '삭제',
+                      destructive: true,
+                    })
+                  ) {
+                    deleteMutation.mutate(editing.id);
+                    setEditing(null);
+                  }
+                }
+              : undefined
+          }
+        />
+      )}
     </View>
   );
 }
@@ -125,15 +149,19 @@ function RecurringEditor({
   categories,
   editing,
   onClose,
+  onDelete,
 }: {
   ledgerId: string;
   categories: Category[];
   editing: RecurringTransaction | 'new' | null;
   onClose: () => void;
+  onDelete?: () => void;
 }) {
   const queryClient = useQueryClient();
   const isEdit = editing && editing !== 'new';
   const initial = isEdit ? (editing as RecurringTransaction) : null;
+
+  const initialSchedule = scheduleFromDate(initial?.start_date ?? null);
 
   const [type, setType] = useState<TransactionType>(initial?.type ?? 'expense');
   const [amount, setAmount] = useState(initial ? String(Number(initial.amount)) : '');
@@ -141,12 +169,15 @@ function RecurringEditor({
   const [memo, setMemo] = useState(initial?.memo ?? '');
   const [categoryId, setCategoryId] = useState<string | null>(initial?.category_id ?? null);
   const [frequency, setFrequency] = useState<RecurrenceFrequency>(initial?.frequency ?? 'monthly');
-  const [interval, setIntervalValue] = useState(String(initial?.interval ?? 1));
-  const [startDate, setStartDate] = useState(initial?.start_date ?? new Date().toISOString().slice(0, 10));
+  const [weekday, setWeekday] = useState(initialSchedule.weekday);
+  const [monthDay, setMonthDay] = useState(initialSchedule.day);
+  const [yearMonth, setYearMonth] = useState(initialSchedule.month);
   const [endDate, setEndDate] = useState(initial?.end_date ?? '');
   const [active, setActive] = useState(initial?.active ?? true);
 
   const filteredCategories = categories.filter((c) => c.type === type);
+
+  const startDate = computeStartDate(frequency, { weekday, day: monthDay, month: yearMonth });
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -157,7 +188,7 @@ function RecurringEditor({
         payee: payee.trim() || null,
         memo: memo.trim() || null,
         frequency,
-        interval: Math.max(1, parseInt(interval || '1', 10)),
+        interval: 1,
         start_date: startDate,
         end_date: endDate || null,
       };
@@ -185,10 +216,6 @@ function RecurringEditor({
   function onSubmit() {
     if (!amount || Number(amount) <= 0) {
       notify('입력 오류', '금액을 입력하세요');
-      return;
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-      notify('입력 오류', '시작일 형식: YYYY-MM-DD');
       return;
     }
     if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
@@ -238,22 +265,76 @@ function RecurringEditor({
               ))}
             </View>
 
-            <Text style={styles.label}>주기 간격 (몇 단위마다)</Text>
-            <TextInput
-              style={styles.input}
-              keyboardType="numeric"
-              value={interval}
-              onChangeText={setIntervalValue}
-            />
+            {frequency === 'daily' && <Text style={[styles.hint, { marginTop: 10 }]}>매일 반복됩니다.</Text>}
 
-            <Text style={styles.label}>시작일</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="YYYY-MM-DD"
-              value={startDate}
-              onChangeText={setStartDate}
-              autoCapitalize="none"
-            />
+            {frequency === 'weekly' && (
+              <>
+                <Text style={styles.label}>요일</Text>
+                <View style={styles.pickerRow}>
+                  {WEEKDAYS.map((w, i) => (
+                    <Pressable
+                      key={i}
+                      style={[styles.dayChip, weekday === i && styles.dayChipActive]}
+                      onPress={() => setWeekday(i)}
+                    >
+                      <Text style={[styles.dayChipText, weekday === i && styles.dayChipTextActive]}>{w}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            )}
+
+            {frequency === 'monthly' && (
+              <>
+                <Text style={styles.label}>매월 며칠</Text>
+                <View style={styles.pickerRow}>
+                  {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                    <Pressable
+                      key={d}
+                      style={[styles.dayChip, monthDay === d && styles.dayChipActive]}
+                      onPress={() => setMonthDay(d)}
+                    >
+                      <Text style={[styles.dayChipText, monthDay === d && styles.dayChipTextActive]}>{d}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={[styles.hint, { marginTop: 6 }]}>29~31일은 매월 있지 않아 선택할 수 없어요.</Text>
+              </>
+            )}
+
+            {frequency === 'yearly' && (
+              <>
+                <Text style={styles.label}>월</Text>
+                <View style={styles.pickerRow}>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                    <Pressable
+                      key={m}
+                      style={[styles.dayChip, yearMonth === m && styles.dayChipActive]}
+                      onPress={() => {
+                        setYearMonth(m);
+                        setMonthDay((d) => Math.min(d, monthMaxDay(m)));
+                      }}
+                    >
+                      <Text style={[styles.dayChipText, yearMonth === m && styles.dayChipTextActive]}>{m}월</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={styles.label}>일</Text>
+                <View style={styles.pickerRow}>
+                  {Array.from({ length: monthMaxDay(yearMonth) }, (_, i) => i + 1).map((d) => (
+                    <Pressable
+                      key={d}
+                      style={[styles.dayChip, monthDay === d && styles.dayChipActive]}
+                      onPress={() => setMonthDay(d)}
+                    >
+                      <Text style={[styles.dayChipText, monthDay === d && styles.dayChipTextActive]}>{d}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            )}
+
+            <Text style={[styles.hint, { marginTop: 10 }]}>첫 등록 예정일: {startDate}</Text>
 
             <Text style={styles.label}>종료일 (선택)</Text>
             <TextInput
@@ -312,6 +393,12 @@ function RecurringEditor({
                 {saveMutation.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>저장</Text>}
               </Pressable>
             </View>
+
+            {onDelete && (
+              <Pressable style={styles.deleteButton} onPress={onDelete}>
+                <Text style={styles.deleteButtonText}>반복 거래 삭제</Text>
+              </Pressable>
+            )}
           </ScrollView>
         </View>
       </View>
@@ -373,6 +460,28 @@ const styles = StyleSheet.create({
   hint: { color: '#9CA3AF', fontSize: 13 },
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5 },
   chipText: { fontSize: 14, fontWeight: '600', color: '#374151' },
+  pickerRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  dayChip: {
+    minWidth: 40,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+  },
+  dayChipActive: { backgroundColor: '#3B82F6' },
+  dayChipText: { fontSize: 14, fontWeight: '600', color: '#374151' },
+  dayChipTextActive: { color: '#fff' },
+  deleteButton: {
+    marginTop: 12,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+  },
+  deleteButtonText: { color: '#DC2626', fontSize: 15, fontWeight: '700' },
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',

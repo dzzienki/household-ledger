@@ -76,6 +76,12 @@ async def update_recurring(
 
     for key, value in data.items():
         setattr(rule, key, value)
+
+    # When the schedule's anchor date changes, realign the next due date so the
+    # rule fires on the newly chosen day rather than the stale one.
+    if "start_date" in data:
+        rule.next_due_date = data["start_date"]
+
     db.add(rule)
     await db.commit()
     await db.refresh(rule)
