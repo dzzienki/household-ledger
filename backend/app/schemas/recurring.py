@@ -28,6 +28,7 @@ class RecurringUpdate(BaseModel):
     memo: str | None = Field(default=None, max_length=500)
     frequency: RecurrenceFrequency | None = None
     interval: int | None = Field(default=None, ge=1, le=999)
+    start_date: date | None = None
     end_date: date | None = None
     active: bool | None = None
 
