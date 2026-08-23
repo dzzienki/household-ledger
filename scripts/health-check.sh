@@ -38,9 +38,9 @@ check "백엔드 ${BACKEND_PORT} /api/health 200" \
 
 # --- Nginx 경유 ---
 check "${CONTEXT_ROOT}/ SPA 응답 (200)" \
-  bash -c "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1${CONTEXT_ROOT}/ | grep -q '^200$'"
+  bash -c "curl -s -k -L -o /dev/null -w '%{http_code}' http://127.0.0.1${CONTEXT_ROOT}/ | grep -q '^200$'"
 check "${CONTEXT_ROOT}/api/health 백엔드 도달 (200)" \
-  bash -c "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1${CONTEXT_ROOT}/api/health | grep -q '^200$'"
+  bash -c "curl -s -k -L -o /dev/null -w '%{http_code}' http://127.0.0.1${CONTEXT_ROOT}/api/health | grep -q '^200$'"
 
 # --- 파일 / 권한 ---
 check "${WEB_ROOT}/index.html 존재"            test -f "${WEB_ROOT}/index.html"

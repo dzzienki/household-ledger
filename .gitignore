@@ -63,3 +63,7 @@ logs/
 *.log
 uploads/
 tmp/
+
+# Claude Code
+CLAUDE.md
+.claude/
