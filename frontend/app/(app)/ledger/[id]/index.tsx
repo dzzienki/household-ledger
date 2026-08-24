@@ -214,17 +214,12 @@ export default function LedgerDetailScreen() {
       <View style={styles.quickRow}>
         <QuickButton label="예산·카테고리" onPress={() => router.push(`/(app)/ledger/${id}/budgets`)} />
         <QuickButton label="태그" onPress={() => router.push(`/(app)/ledger/${id}/tags`)} />
-        <QuickButton label="멤버" onPress={() => router.push(`/(app)/ledger/${id}/members`)} />
+        <QuickButton label="환율" onPress={() => router.push(`/(app)/ledger/${id}/exchange-rates`)} />
       </View>
       <View style={styles.quickRow}>
         <QuickButton label="반복 거래" onPress={() => router.push(`/(app)/ledger/${id}/recurring`)} />
         <QuickButton label="통계" onPress={() => router.push(`/(app)/ledger/${id}/stats`)} />
-        <QuickButton label="환율" onPress={() => router.push(`/(app)/ledger/${id}/exchange-rates`)} />
-      </View>
-      <View style={styles.quickRow}>
         <QuickButton label="파일 가져오기" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
-        <View style={styles.quickSpacer} />
-        <View style={styles.quickSpacer} />
       </View>
 
       {txnQuery.isLoading ? (
