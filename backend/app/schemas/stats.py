@@ -34,3 +34,5 @@ class LedgerSummary(BaseModel):
     period_net: Decimal
     final_balance: Decimal
     all_time_balance: Decimal
+    prev_period_expense: Decimal = Decimal(0)
+    has_income: bool = True

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated
 
@@ -169,6 +169,26 @@ async def ledger_summary(
     period_expense = Decimal(period_row.expense) if period_row else Decimal(0)
     period_net = period_income - period_expense
 
+    # 4. Previous period expense (e.g. previous month for comparison)
+    prev_period_expense = Decimal(0)
+    if start_date is not None:
+        if start_date.month == 1:
+            prev_start = date(start_date.year - 1, 12, 1)
+            prev_end = date(start_date.year - 1, 12, 31)
+        else:
+            prev_start = date(start_date.year, start_date.month - 1, 1)
+            prev_end = date(start_date.year, start_date.month, 1) - timedelta(days=1)
+
+        prev_stmt = select(
+            func.coalesce(func.sum(expense_val), 0).label("expense"),
+        ).where(
+            Transaction.ledger_id == ledger.id,
+            Transaction.transaction_date >= prev_start,
+            Transaction.transaction_date <= prev_end,
+        )
+        prev_row = (await db.execute(prev_stmt)).first()
+        prev_period_expense = Decimal(prev_row.expense) if prev_row else Decimal(0)
+
     # Final balance as of end of period
     if start_date is not None:
         final_balance = carryover_balance + period_net
@@ -183,5 +203,7 @@ async def ledger_summary(
         period_net=period_net,
         final_balance=final_balance,
         all_time_balance=all_time_balance,
+        prev_period_expense=prev_period_expense,
+        has_income=all_time_income > 0,
     )
 

@@ -175,4 +175,6 @@ export interface LedgerSummary {
   period_net: string;
   final_balance: string;
   all_time_balance: string;
+  prev_period_expense: string;
+  has_income: boolean;
 }

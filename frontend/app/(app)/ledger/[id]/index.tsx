@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
@@ -13,7 +13,16 @@ import { api } from '@/lib/api';
 import { convertToBase, ratesToMap } from '@/lib/currencies';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/hooks';
+import { storage } from '@/lib/storage';
 import type { Category, ExchangeRate, Ledger, LedgerSummary, Tag, Transaction } from '@/lib/types';
+
+type SummaryMode = 'balance' | 'expense' | 'simple';
+
+const SUMMARY_MODE_LABELS: Record<SummaryMode, string> = {
+  balance: '잔액',
+  expense: '지출',
+  simple: '수지',
+};
 
 export default function LedgerDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -23,6 +32,9 @@ export default function LedgerDetailScreen() {
   const debouncedSearch = useDebouncedValue(searchInput, 300);
   const [filter, setFilter] = useState<TransactionFilterState>(DEFAULT_FILTER);
   const [filterOpen, setFilterOpen] = useState(false);
+
+  const [summaryMode, setSummaryMode] = useState<SummaryMode>('balance');
+  const [userExplicitMode, setUserExplicitMode] = useState(false);
 
   // Month scope: home shows one month at a time (arrows to move). "전체" turns it off.
   const [monthMode, setMonthMode] = useState(true);
@@ -105,6 +117,32 @@ export default function LedgerDetailScreen() {
     enabled: !!id,
   });
 
+  // Storage persistence for summary mode
+  useEffect(() => {
+    if (!id) return;
+    storage.get(`ledger.summaryMode.${id}`).then((saved) => {
+      if (saved === 'balance' || saved === 'expense' || saved === 'simple') {
+        setSummaryMode(saved as SummaryMode);
+        setUserExplicitMode(true);
+      }
+    });
+  }, [id]);
+
+  // Auto-detection: If user has never set a preference and this ledger has no income, default to 'expense'
+  useEffect(() => {
+    if (!userExplicitMode && summaryQuery.data && !summaryQuery.data.has_income) {
+      setSummaryMode('expense');
+    }
+  }, [userExplicitMode, summaryQuery.data]);
+
+  function handleSelectMode(nextMode: SummaryMode) {
+    setSummaryMode(nextMode);
+    setUserExplicitMode(true);
+    if (id) {
+      storage.set(`ledger.summaryMode.${id}`, nextMode);
+    }
+  }
+
   const categoriesById = new Map((categoriesQuery.data ?? []).map((c) => [c.id, c]));
 
   if (ledgerQuery.isLoading) {
@@ -144,10 +182,14 @@ export default function LedgerDetailScreen() {
   const periodNet = summaryQuery.data ? Number(summaryQuery.data.period_net) : totals.income - totals.expense;
   const finalBalance = summaryQuery.data ? Number(summaryQuery.data.final_balance) : carryover + periodNet;
   const allTimeBalance = summaryQuery.data ? Number(summaryQuery.data.all_time_balance) : finalBalance;
+  const prevExpense = Number(summaryQuery.data?.prev_period_expense ?? 0);
 
   const displayIncome = filterActive ? totals.income : periodIncome;
   const displayExpense = filterActive ? totals.expense : periodExpense;
   const displayNet = filterActive ? totals.income - totals.expense : periodNet;
+
+  const expenseDiff = displayExpense - prevExpense;
+  const isSaving = expenseDiff <= 0;
 
   return (
     <View style={styles.container}>
@@ -191,105 +233,229 @@ export default function LedgerDetailScreen() {
         </Pressable>
       </View>
 
-      {/* 종합 잔액 & 수입/지출 요약 카드 */}
+      {/* 종합 잔액 & 수입/지출 요약 카드 (모드 선택 지원) */}
       <View style={styles.summaryCard}>
-        {monthMode ? (
-          <>
-            {/* 상단 2단: 전월 이월 & 당월 수지 */}
-            <View style={styles.summaryTopRow}>
-              <View style={styles.summaryTopItem}>
-                <Text style={styles.summaryTopLabel}>전월 이월 (지난달까지)</Text>
+        {/* 상단 모드 전환 탭/헤더 */}
+        <View style={styles.cardHeaderRow}>
+          <Text style={styles.cardHeaderTitle}>
+            {summaryMode === 'balance'
+              ? '💰 잔액 & 이월'
+              : summaryMode === 'expense'
+                ? '📉 지출 중심 요약'
+                : '⚖️ 수입 / 지출'}
+          </Text>
+          <View style={styles.modePillRow}>
+            {(['balance', 'expense', 'simple'] as SummaryMode[]).map((m) => (
+              <Pressable
+                key={m}
+                style={[styles.modePill, summaryMode === m && styles.modePillActive]}
+                onPress={() => handleSelectMode(m)}
+                hitSlop={6}
+              >
                 <Text
-                  style={[
-                    styles.summaryTopValue,
-                    { color: carryover >= 0 ? '#2563EB' : '#DC2626' },
-                  ]}
+                  style={[styles.modePillText, summaryMode === m && styles.modePillTextActive]}
                 >
-                  {carryover > 0 ? '+' : ''}
-                  {formatCurrency(carryover, currency)}
+                  {SUMMARY_MODE_LABELS[m]}
                 </Text>
-              </View>
-              <View style={styles.summaryTopDivider} />
-              <View style={styles.summaryTopItem}>
-                <Text style={styles.summaryTopLabel}>당월 수지 (수입-지출)</Text>
-                <Text
-                  style={[
-                    styles.summaryTopValue,
-                    { color: displayNet >= 0 ? '#16A34A' : '#DC2626' },
-                  ]}
-                >
-                  {displayNet > 0 ? '+' : ''}
-                  {formatCurrency(displayNet, currency)}
-                </Text>
-              </View>
-            </View>
+              </Pressable>
+            ))}
+          </View>
+        </View>
 
-            <View style={styles.summaryCardDivider} />
+        {/* 1. 잔액 & 이월 모드 */}
+        {summaryMode === 'balance' &&
+          (monthMode ? (
+            <>
+              <View style={styles.summaryTopRow}>
+                <View style={styles.summaryTopItem}>
+                  <Text style={styles.summaryTopLabel}>전월 이월 (지난달까지)</Text>
+                  <Text
+                    style={[
+                      styles.summaryTopValue,
+                      { color: carryover >= 0 ? '#2563EB' : '#DC2626' },
+                    ]}
+                  >
+                    {carryover > 0 ? '+' : ''}
+                    {formatCurrency(carryover, currency)}
+                  </Text>
+                </View>
+                <View style={styles.summaryTopDivider} />
+                <View style={styles.summaryTopItem}>
+                  <Text style={styles.summaryTopLabel}>당월 수지 (수입-지출)</Text>
+                  <Text
+                    style={[
+                      styles.summaryTopValue,
+                      { color: displayNet >= 0 ? '#16A34A' : '#DC2626' },
+                    ]}
+                  >
+                    {displayNet > 0 ? '+' : ''}
+                    {formatCurrency(displayNet, currency)}
+                  </Text>
+                </View>
+              </View>
 
-            {/* 하단 메인: 현재 총 잔액 + 당월 수입/지출 상세 */}
+              <View style={styles.summaryCardDivider} />
+
+              <View style={styles.summaryMainRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.summaryMainLabel}>
+                    {monthLabel} 말 기준 잔액{filterActive ? ' (필터 미적용)' : ''}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.summaryMainBalance,
+                      { color: finalBalance >= 0 ? '#111827' : '#DC2626' },
+                    ]}
+                  >
+                    {formatCurrency(finalBalance, currency)}
+                  </Text>
+                </View>
+                <View style={styles.summarySubAmounts}>
+                  <View style={styles.summarySubItem}>
+                    <View style={[styles.subDot, { backgroundColor: '#16A34A' }]} />
+                    <Text style={styles.subLabel}>수입</Text>
+                    <Text style={[styles.subAmount, { color: '#16A34A' }]}>
+                      +{formatCurrency(displayIncome, currency)}
+                    </Text>
+                  </View>
+                  <View style={styles.summarySubItem}>
+                    <View style={[styles.subDot, { backgroundColor: '#DC2626' }]} />
+                    <Text style={styles.subLabel}>지출</Text>
+                    <Text style={[styles.subAmount, { color: '#DC2626' }]}>
+                      -{formatCurrency(displayExpense, currency)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </>
+          ) : (
             <View style={styles.summaryMainRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.summaryMainLabel}>
-                  {monthLabel} 말 기준 잔액{filterActive ? ' (필터 미적용)' : ''}
+                  전체 누적 잔액{filterActive ? ' (필터 미적용)' : ''}
                 </Text>
                 <Text
                   style={[
                     styles.summaryMainBalance,
-                    { color: finalBalance >= 0 ? '#111827' : '#DC2626' },
+                    { color: allTimeBalance >= 0 ? '#111827' : '#DC2626' },
                   ]}
                 >
-                  {formatCurrency(finalBalance, currency)}
+                  {formatCurrency(allTimeBalance, currency)}
                 </Text>
               </View>
               <View style={styles.summarySubAmounts}>
                 <View style={styles.summarySubItem}>
                   <View style={[styles.subDot, { backgroundColor: '#16A34A' }]} />
-                  <Text style={styles.subLabel}>수입</Text>
+                  <Text style={styles.subLabel}>총 수입</Text>
                   <Text style={[styles.subAmount, { color: '#16A34A' }]}>
                     +{formatCurrency(displayIncome, currency)}
                   </Text>
                 </View>
                 <View style={styles.summarySubItem}>
                   <View style={[styles.subDot, { backgroundColor: '#DC2626' }]} />
-                  <Text style={styles.subLabel}>지출</Text>
+                  <Text style={styles.subLabel}>총 지출</Text>
                   <Text style={[styles.subAmount, { color: '#DC2626' }]}>
                     -{formatCurrency(displayExpense, currency)}
                   </Text>
                 </View>
               </View>
             </View>
-          </>
-        ) : (
-          /* 전체 기간 모드 */
-          <View style={styles.summaryMainRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.summaryMainLabel}>
-                전체 누적 잔액{filterActive ? ' (필터 미적용)' : ''}
-              </Text>
-              <Text
-                style={[
-                  styles.summaryMainBalance,
-                  { color: allTimeBalance >= 0 ? '#111827' : '#DC2626' },
-                ]}
-              >
-                {formatCurrency(allTimeBalance, currency)}
+          ))}
+
+        {/* 2. 지출 중심 & 전월 비교 모드 */}
+        {summaryMode === 'expense' &&
+          (monthMode ? (
+            <>
+              <View style={styles.summaryTopRow}>
+                <View style={styles.summaryTopItem}>
+                  <Text style={styles.summaryTopLabel}>지난달 지출</Text>
+                  <Text style={[styles.summaryTopValue, { color: '#4B5563' }]}>
+                    {formatCurrency(prevExpense, currency)}
+                  </Text>
+                </View>
+                <View style={styles.summaryTopDivider} />
+                <View style={styles.summaryTopItem}>
+                  <Text style={styles.summaryTopLabel}>전월 대비 변화</Text>
+                  <Text
+                    style={[
+                      styles.summaryTopValue,
+                      { color: isSaving ? '#16A34A' : '#DC2626' },
+                    ]}
+                  >
+                    {prevExpense > 0
+                      ? isSaving
+                        ? `${formatCurrency(Math.abs(expenseDiff), currency)} 절약 👏`
+                        : `${formatCurrency(expenseDiff, currency)} 증가 ⚠️`
+                      : '비교 데이터 없음'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.summaryCardDivider} />
+
+              <View style={styles.summaryMainRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.summaryMainLabel}>
+                    {monthLabel} 총 지출{filterActive ? ' (필터 적용)' : ''}
+                  </Text>
+                  <Text style={[styles.summaryMainBalance, { color: '#DC2626' }]}>
+                    {formatCurrency(displayExpense, currency)}
+                  </Text>
+                </View>
+                <View style={styles.summarySubAmounts}>
+                  {displayIncome > 0 ? (
+                    <View style={styles.summarySubItem}>
+                      <View style={[styles.subDot, { backgroundColor: '#16A34A' }]} />
+                      <Text style={styles.subLabel}>수입</Text>
+                      <Text style={[styles.subAmount, { color: '#16A34A' }]}>
+                        +{formatCurrency(displayIncome, currency)}
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={{ fontSize: 11, color: '#9CA3AF' }}>지출 전용 가계부</Text>
+                  )}
+                </View>
+              </View>
+            </>
+          ) : (
+            <View style={styles.summaryMainRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.summaryMainLabel}>
+                  전체 누적 지출{filterActive ? ' (필터 적용)' : ''}
+                </Text>
+                <Text style={[styles.summaryMainBalance, { color: '#DC2626' }]}>
+                  {formatCurrency(displayExpense, currency)}
+                </Text>
+              </View>
+              <View style={styles.summarySubAmounts}>
+                {displayIncome > 0 && (
+                  <View style={styles.summarySubItem}>
+                    <View style={[styles.subDot, { backgroundColor: '#16A34A' }]} />
+                    <Text style={styles.subLabel}>총 수입</Text>
+                    <Text style={[styles.subAmount, { color: '#16A34A' }]}>
+                      +{formatCurrency(displayIncome, currency)}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          ))}
+
+        {/* 3. 심플 2단 수입/지출 모드 */}
+        {summaryMode === 'simple' && (
+          <View style={styles.simpleRow}>
+            <View style={styles.simpleItem}>
+              <Text style={styles.simpleLabel}>수입{filterActive ? ' (필터)' : ''}</Text>
+              <Text style={[styles.simpleValue, { color: '#16A34A' }]}>
+                {formatCurrency(displayIncome, currency)}
               </Text>
             </View>
-            <View style={styles.summarySubAmounts}>
-              <View style={styles.summarySubItem}>
-                <View style={[styles.subDot, { backgroundColor: '#16A34A' }]} />
-                <Text style={styles.subLabel}>총 수입</Text>
-                <Text style={[styles.subAmount, { color: '#16A34A' }]}>
-                  +{formatCurrency(displayIncome, currency)}
-                </Text>
-              </View>
-              <View style={styles.summarySubItem}>
-                <View style={[styles.subDot, { backgroundColor: '#DC2626' }]} />
-                <Text style={styles.subLabel}>총 지출</Text>
-                <Text style={[styles.subAmount, { color: '#DC2626' }]}>
-                  -{formatCurrency(displayExpense, currency)}
-                </Text>
-              </View>
+            <View style={styles.summaryTopDivider} />
+            <View style={styles.simpleItem}>
+              <Text style={styles.simpleLabel}>지출{filterActive ? ' (필터)' : ''}</Text>
+              <Text style={[styles.simpleValue, { color: '#DC2626' }]}>
+                {formatCurrency(displayExpense, currency)}
+              </Text>
             </View>
           </View>
         )}
@@ -461,6 +627,65 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  cardHeaderTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  modePillRow: {
+    flexDirection: 'row',
+    gap: 4,
+    backgroundColor: '#E2E8F0',
+    padding: 2,
+    borderRadius: 14,
+  },
+  modePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  modePillActive: {
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  modePillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  modePillTextActive: {
+    color: '#1E293B',
+    fontWeight: '700',
+  },
+  simpleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  simpleItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  simpleLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 4,
+    fontWeight: '500',
+  },
+  simpleValue: {
+    fontSize: 18,
+    fontWeight: '800',
   },
   summaryTopRow: {
     flexDirection: 'row',
