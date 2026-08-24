@@ -13,7 +13,7 @@ import { api } from '@/lib/api';
 import { convertToBase, ratesToMap } from '@/lib/currencies';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/hooks';
-import type { Category, ExchangeRate, Ledger, Tag, Transaction } from '@/lib/types';
+import type { Category, ExchangeRate, Ledger, LedgerSummary, Tag, Transaction } from '@/lib/types';
 
 export default function LedgerDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -84,6 +84,21 @@ export default function LedgerDetailScreen() {
     enabled: !!id,
   });
 
+  const summaryParams = useMemo(() => {
+    if (!monthMode) return '';
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const start = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+    const end = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0);
+    return `?start_date=${iso(start)}&end_date=${iso(end)}`;
+  }, [monthMode, viewMonth]);
+
+  const summaryQuery = useQuery({
+    queryKey: ['summary', id, summaryParams],
+    queryFn: () => api<LedgerSummary>(`/api/ledgers/${id}/stats/summary${summaryParams}`),
+    enabled: !!id,
+  });
+
   const txnQuery = useQuery({
     queryKey: ['transactions', id, queryParams],
     queryFn: () => api<Transaction[]>(`/api/ledgers/${id}/transactions${queryParams}`),
@@ -122,6 +137,17 @@ export default function LedgerDetailScreen() {
     { income: 0, expense: 0 },
   );
   const filterActive = isFilterActive(filter) || debouncedSearch.trim().length > 0;
+
+  const carryover = Number(summaryQuery.data?.carryover_balance ?? 0);
+  const periodIncome = summaryQuery.data ? Number(summaryQuery.data.period_income) : totals.income;
+  const periodExpense = summaryQuery.data ? Number(summaryQuery.data.period_expense) : totals.expense;
+  const periodNet = summaryQuery.data ? Number(summaryQuery.data.period_net) : totals.income - totals.expense;
+  const finalBalance = summaryQuery.data ? Number(summaryQuery.data.final_balance) : carryover + periodNet;
+  const allTimeBalance = summaryQuery.data ? Number(summaryQuery.data.all_time_balance) : finalBalance;
+
+  const displayIncome = filterActive ? totals.income : periodIncome;
+  const displayExpense = filterActive ? totals.expense : periodExpense;
+  const displayNet = filterActive ? totals.income - totals.expense : periodNet;
 
   return (
     <View style={styles.container}>
@@ -165,20 +191,108 @@ export default function LedgerDetailScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.summary}>
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>수입{filterActive ? ' (필터)' : ''}</Text>
-          <Text style={[styles.summaryValue, { color: '#16A34A' }]}>
-            {formatCurrency(totals.income, currency)}
-          </Text>
-        </View>
-        <View style={styles.summaryDivider} />
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>지출{filterActive ? ' (필터)' : ''}</Text>
-          <Text style={[styles.summaryValue, { color: '#DC2626' }]}>
-            {formatCurrency(totals.expense, currency)}
-          </Text>
-        </View>
+      {/* 종합 잔액 & 수입/지출 요약 카드 */}
+      <View style={styles.summaryCard}>
+        {monthMode ? (
+          <>
+            {/* 상단 2단: 전월 이월 & 당월 수지 */}
+            <View style={styles.summaryTopRow}>
+              <View style={styles.summaryTopItem}>
+                <Text style={styles.summaryTopLabel}>전월 이월 (지난달까지)</Text>
+                <Text
+                  style={[
+                    styles.summaryTopValue,
+                    { color: carryover >= 0 ? '#2563EB' : '#DC2626' },
+                  ]}
+                >
+                  {carryover > 0 ? '+' : ''}
+                  {formatCurrency(carryover, currency)}
+                </Text>
+              </View>
+              <View style={styles.summaryTopDivider} />
+              <View style={styles.summaryTopItem}>
+                <Text style={styles.summaryTopLabel}>당월 수지 (수입-지출)</Text>
+                <Text
+                  style={[
+                    styles.summaryTopValue,
+                    { color: displayNet >= 0 ? '#16A34A' : '#DC2626' },
+                  ]}
+                >
+                  {displayNet > 0 ? '+' : ''}
+                  {formatCurrency(displayNet, currency)}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.summaryCardDivider} />
+
+            {/* 하단 메인: 현재 총 잔액 + 당월 수입/지출 상세 */}
+            <View style={styles.summaryMainRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.summaryMainLabel}>
+                  {monthLabel} 말 기준 잔액{filterActive ? ' (필터 미적용)' : ''}
+                </Text>
+                <Text
+                  style={[
+                    styles.summaryMainBalance,
+                    { color: finalBalance >= 0 ? '#111827' : '#DC2626' },
+                  ]}
+                >
+                  {formatCurrency(finalBalance, currency)}
+                </Text>
+              </View>
+              <View style={styles.summarySubAmounts}>
+                <View style={styles.summarySubItem}>
+                  <View style={[styles.subDot, { backgroundColor: '#16A34A' }]} />
+                  <Text style={styles.subLabel}>수입</Text>
+                  <Text style={[styles.subAmount, { color: '#16A34A' }]}>
+                    +{formatCurrency(displayIncome, currency)}
+                  </Text>
+                </View>
+                <View style={styles.summarySubItem}>
+                  <View style={[styles.subDot, { backgroundColor: '#DC2626' }]} />
+                  <Text style={styles.subLabel}>지출</Text>
+                  <Text style={[styles.subAmount, { color: '#DC2626' }]}>
+                    -{formatCurrency(displayExpense, currency)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </>
+        ) : (
+          /* 전체 기간 모드 */
+          <View style={styles.summaryMainRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.summaryMainLabel}>
+                전체 누적 잔액{filterActive ? ' (필터 미적용)' : ''}
+              </Text>
+              <Text
+                style={[
+                  styles.summaryMainBalance,
+                  { color: allTimeBalance >= 0 ? '#111827' : '#DC2626' },
+                ]}
+              >
+                {formatCurrency(allTimeBalance, currency)}
+              </Text>
+            </View>
+            <View style={styles.summarySubAmounts}>
+              <View style={styles.summarySubItem}>
+                <View style={[styles.subDot, { backgroundColor: '#16A34A' }]} />
+                <Text style={styles.subLabel}>총 수입</Text>
+                <Text style={[styles.subAmount, { color: '#16A34A' }]}>
+                  +{formatCurrency(displayIncome, currency)}
+                </Text>
+              </View>
+              <View style={styles.summarySubItem}>
+                <View style={[styles.subDot, { backgroundColor: '#DC2626' }]} />
+                <Text style={styles.subLabel}>총 지출</Text>
+                <Text style={[styles.subAmount, { color: '#DC2626' }]}>
+                  -{formatCurrency(displayExpense, currency)}
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
       {hasForeign && (
         <Text style={styles.convertNote}>* 외화 거래는 {currency} 환율로 환산해 합산했습니다</Text>
@@ -338,20 +452,86 @@ const styles = StyleSheet.create({
   monthAllButtonActive: { backgroundColor: '#1F2937' },
   monthAllText: { fontWeight: '700', color: '#6B7280', fontSize: 13 },
   monthAllTextActive: { color: '#fff' },
-  summary: {
-    flexDirection: 'row',
-    backgroundColor: '#F9FAFB',
-    margin: 16,
+  summaryCard: {
+    backgroundColor: '#F8FAFC',
+    marginHorizontal: 16,
+    marginTop: 8,
     marginBottom: 8,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
   },
-  summaryItem: { flex: 1, alignItems: 'center' },
-  summaryDivider: { width: 1, backgroundColor: '#E5E7EB', marginHorizontal: 8 },
-  summaryLabel: { fontSize: 12, color: '#6B7280', marginBottom: 4 },
-  summaryValue: { fontSize: 18, fontWeight: '700' },
+  summaryTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+  },
+  summaryTopItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  summaryTopDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: '#CBD5E1',
+    marginHorizontal: 8,
+  },
+  summaryTopLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    marginBottom: 2,
+    fontWeight: '500',
+  },
+  summaryTopValue: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  summaryCardDivider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginBottom: 10,
+  },
+  summaryMainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  summaryMainLabel: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  summaryMainBalance: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+  },
+  summarySubAmounts: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  summarySubItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  subDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  subLabel: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  subAmount: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   convertNote: { fontSize: 11, color: '#9CA3AF', paddingHorizontal: 16, marginBottom: 4 },
   searchRow: {
     flexDirection: 'row',

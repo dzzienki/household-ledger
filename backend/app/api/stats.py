@@ -9,7 +9,7 @@ from sqlmodel import select
 from app.api.deps import DbDep, get_ledger_membership
 from app.models import Category, Ledger, LedgerMember, Transaction
 from app.models.category import TransactionType
-from app.schemas.stats import CategoryTotal, MonthlyTotal
+from app.schemas.stats import CategoryTotal, LedgerSummary, MonthlyTotal
 from app.services.currency import converted_amount
 from app.services.recurring import materialize_due_for_ledger
 
@@ -111,3 +111,77 @@ async def category_totals(
         )
         for r in rows
     ]
+
+
+@router.get("/summary", response_model=LedgerSummary)
+async def ledger_summary(
+    db: DbDep,
+    membership: Annotated[tuple[Ledger, LedgerMember], Depends(get_ledger_membership)],
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> LedgerSummary:
+    ledger, _ = membership
+    if await materialize_due_for_ledger(db, ledger.id) > 0:
+        await db.commit()
+
+    amount = await converted_amount(db, ledger)
+    income_val = case((Transaction.type == TransactionType.INCOME, amount), else_=0)
+    expense_val = case((Transaction.type == TransactionType.EXPENSE, amount), else_=0)
+
+    # 1. All-time totals
+    all_time_stmt = select(
+        func.coalesce(func.sum(income_val), 0).label("income"),
+        func.coalesce(func.sum(expense_val), 0).label("expense"),
+    ).where(Transaction.ledger_id == ledger.id)
+    all_time_row = (await db.execute(all_time_stmt)).first()
+    all_time_income = Decimal(all_time_row.income) if all_time_row else Decimal(0)
+    all_time_expense = Decimal(all_time_row.expense) if all_time_row else Decimal(0)
+    all_time_balance = all_time_income - all_time_expense
+
+    # 2. Carryover (before start_date)
+    carryover_balance = Decimal(0)
+    if start_date is not None:
+        carryover_stmt = select(
+            func.coalesce(func.sum(income_val), 0).label("income"),
+            func.coalesce(func.sum(expense_val), 0).label("expense"),
+        ).where(
+            Transaction.ledger_id == ledger.id,
+            Transaction.transaction_date < start_date,
+        )
+        carryover_row = (await db.execute(carryover_stmt)).first()
+        carryover_income = Decimal(carryover_row.income) if carryover_row else Decimal(0)
+        carryover_expense = Decimal(carryover_row.expense) if carryover_row else Decimal(0)
+        carryover_balance = carryover_income - carryover_expense
+
+    # 3. Period totals
+    period_conditions = [Transaction.ledger_id == ledger.id]
+    if start_date is not None:
+        period_conditions.append(Transaction.transaction_date >= start_date)
+    if end_date is not None:
+        period_conditions.append(Transaction.transaction_date <= end_date)
+
+    period_stmt = select(
+        func.coalesce(func.sum(income_val), 0).label("income"),
+        func.coalesce(func.sum(expense_val), 0).label("expense"),
+    ).where(*period_conditions)
+    period_row = (await db.execute(period_stmt)).first()
+    period_income = Decimal(period_row.income) if period_row else Decimal(0)
+    period_expense = Decimal(period_row.expense) if period_row else Decimal(0)
+    period_net = period_income - period_expense
+
+    # Final balance as of end of period
+    if start_date is not None:
+        final_balance = carryover_balance + period_net
+    else:
+        final_balance = all_time_balance
+
+    return LedgerSummary(
+        currency=ledger.currency,
+        carryover_balance=carryover_balance,
+        period_income=period_income,
+        period_expense=period_expense,
+        period_net=period_net,
+        final_balance=final_balance,
+        all_time_balance=all_time_balance,
+    )
+

@@ -166,3 +166,13 @@ export interface InvitationAcceptResponse {
   role: LedgerRole;
   already_member: boolean;
 }
+
+export interface LedgerSummary {
+  currency: string;
+  carryover_balance: string;
+  period_income: string;
+  period_expense: string;
+  period_net: string;
+  final_balance: string;
+  all_time_balance: string;
+}

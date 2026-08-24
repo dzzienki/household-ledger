@@ -24,3 +24,13 @@ class CategoryTotal(BaseModel):
 class StatsRange(BaseModel):
     start_date: date
     end_date: date
+
+
+class LedgerSummary(BaseModel):
+    currency: str
+    carryover_balance: Decimal
+    period_income: Decimal
+    period_expense: Decimal
+    period_net: Decimal
+    final_balance: Decimal
+    all_time_balance: Decimal
