@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { confirmAsync, notify } from '@/lib/dialog';
 
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import type { Ledger, LedgerMember, LedgerRole } from '@/lib/types';
 
@@ -37,18 +37,23 @@ export default function MembersScreen() {
   const isOwner = ledgerQuery.data?.owner_id === user?.id;
 
   const inviteMutation = useMutation({
-    mutationFn: () =>
-      api<LedgerMember>(`/api/ledgers/${ledgerId}/members`, {
+    mutationFn: () => {
+      const trimmed = email.trim();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(trimmed)) {
+        throw new Error('올바른 이메일 형식을 입력해 주세요 (예: user@example.com)');
+      }
+      return api<LedgerMember>(`/api/ledgers/${ledgerId}/members`, {
         method: 'POST',
-        body: { email: email.trim(), role },
-      }),
+        body: { email: trimmed, role },
+      });
+    },
     onSuccess: () => {
       setEmail('');
       queryClient.invalidateQueries({ queryKey: ['members', ledgerId] });
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '초대 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '초대 실패'));
     },
   });
 
@@ -57,8 +62,7 @@ export default function MembersScreen() {
       api(`/api/ledgers/${ledgerId}/members/${userId}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['members', ledgerId] }),
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '제거 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '제거 실패'));
     },
   });
 

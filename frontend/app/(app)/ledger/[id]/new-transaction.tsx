@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { notify } from '@/lib/dialog';
 
 import { TransactionForm, type TransactionFormValue } from '@/components/transaction-form';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, getErrorMessage } from '@/lib/api';
 import type { Category, Transaction } from '@/lib/types';
 
 export default function NewTransactionScreen() {
@@ -27,8 +27,7 @@ export default function NewTransactionScreen() {
       router.replace(`/(app)/ledger/${ledgerId}`);
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '거래 등록 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '거래 등록 실패'));
     },
   });
 

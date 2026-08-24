@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { notify } from '@/lib/dialog';
 
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, getErrorMessage } from '@/lib/api';
 import { CURRENCIES } from '@/lib/currencies';
 import type { Ledger, LedgerType } from '@/lib/types';
 
@@ -26,8 +26,7 @@ export default function NewLedgerScreen() {
       router.replace(`/(app)/ledger/${ledger.id}`);
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '생성 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '생성 실패'));
     },
   });
 

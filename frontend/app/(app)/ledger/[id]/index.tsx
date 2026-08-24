@@ -129,8 +129,8 @@ export default function LedgerDetailScreen() {
         options={{
           title: ledgerQuery.data?.name ?? '거래 내역',
           headerRight: () => (
-            <Pressable onPress={() => router.push(`/(app)/ledger/${id}/stats`)} hitSlop={8}>
-              <Text style={styles.headerLink}>통계</Text>
+            <Pressable onPress={() => router.push(`/(app)/ledger/${id}/members`)} hitSlop={8}>
+              <Text style={styles.headerLink}>멤버</Text>
             </Pressable>
           ),
         }}

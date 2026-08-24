@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { notify } from '@/lib/dialog';
 
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, getErrorMessage } from '@/lib/api';
 import { CURRENCIES } from '@/lib/currencies';
 import type { ExchangeRate, Ledger } from '@/lib/types';
 
@@ -35,8 +35,7 @@ export default function ExchangeRatesScreen() {
       queryClient.invalidateQueries({ queryKey: ['stats'] });
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '삭제 실패'));
     },
   });
 
@@ -149,8 +148,7 @@ function RateEditor({
       onClose();
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '저장 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '저장 실패'));
     },
   });
 

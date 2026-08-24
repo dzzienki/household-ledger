@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { notify } from '@/lib/dialog';
 
-import { API_URL, ApiError, apiDownloadBlob, apiUpload } from '@/lib/api';
+import { API_URL, ApiError, apiDownloadBlob, apiUpload, getErrorMessage } from '@/lib/api';
 import { ACCESS_TOKEN_KEY, storage } from '@/lib/storage';
 
 interface ImportResult {
@@ -62,8 +62,7 @@ export default function DataScreen() {
         }
       }
     } catch (err) {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : (err as Error).message;
-      notify('내보내기 실패', msg);
+      notify('내보내기 실패', getErrorMessage(err, '내보내기 실패'));
     } finally {
       setDownloading(false);
     }
@@ -91,8 +90,7 @@ export default function DataScreen() {
       queryClient.invalidateQueries({ queryKey: ['categories', ledgerId] });
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : (err as Error).message;
-      notify('가져오기 실패', msg);
+      notify('가져오기 실패', getErrorMessage(err, '가져오기 실패'));
     },
   });
 
@@ -136,8 +134,7 @@ export default function DataScreen() {
       queryClient.invalidateQueries({ queryKey: ['stats'] });
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : (err as Error).message;
-      notify('가져오기 실패', msg);
+      notify('가져오기 실패', getErrorMessage(err, '가져오기 실패'));
     },
   });
 

@@ -2,7 +2,7 @@ import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { ApiError } from '@/lib/api';
+import { ApiError, getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 
 export default function LoginScreen() {
@@ -16,16 +16,22 @@ export default function LoginScreen() {
 
   async function onSubmit() {
     setError(null);
-    if (!email.trim() || !password) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
       setError('이메일과 비밀번호를 입력하세요');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      setError('올바른 이메일 형식을 입력해 주세요 (예: user@example.com)');
       return;
     }
     setSubmitting(true);
     try {
-      await signIn(email.trim(), password);
+      await signIn(trimmedEmail, password);
       router.replace('/(app)');
     } catch (err) {
-      setError(err instanceof ApiError ? String(err.detail ?? err.message) : '로그인에 실패했습니다');
+      setError(getErrorMessage(err, '로그인에 실패했습니다'));
     } finally {
       setSubmitting(false);
     }

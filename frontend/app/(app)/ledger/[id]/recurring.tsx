@@ -5,7 +5,7 @@ import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, 
 import { confirmAsync, notify } from '@/lib/dialog';
 
 import { AmountInput } from '@/components/amount-input';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, getErrorMessage } from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
 import {
   WEEKDAYS,
@@ -54,8 +54,7 @@ export default function RecurringScreen() {
       api(`/api/ledgers/${ledgerId}/recurring/${rid}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] }),
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '삭제 실패'));
     },
   });
 
@@ -67,8 +66,7 @@ export default function RecurringScreen() {
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] }),
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '변경 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '변경 실패'));
     },
   });
 
@@ -264,8 +262,7 @@ function RecurringEditor({
       onClose();
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '저장 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '저장 실패'));
     },
   });
 

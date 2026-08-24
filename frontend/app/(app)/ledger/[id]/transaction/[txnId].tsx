@@ -4,7 +4,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { confirmAsync, notify } from '@/lib/dialog';
 
 import { TransactionForm, type TransactionFormValue } from '@/components/transaction-form';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, getErrorMessage } from '@/lib/api';
 import type { Category, Transaction } from '@/lib/types';
 
 export default function EditTransactionScreen() {
@@ -47,8 +47,7 @@ export default function EditTransactionScreen() {
       goToList();
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '수정 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '수정 실패'));
     },
   });
 
@@ -61,8 +60,7 @@ export default function EditTransactionScreen() {
       goToList();
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '삭제 실패'));
     },
   });
 

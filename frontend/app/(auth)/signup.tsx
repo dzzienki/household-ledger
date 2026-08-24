@@ -2,7 +2,7 @@ import { Link, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { ApiError } from '@/lib/api';
+import { ApiError, getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 
 export default function SignupScreen() {
@@ -16,8 +16,15 @@ export default function SignupScreen() {
 
   async function onSubmit() {
     setError(null);
-    if (!email.trim() || !name.trim()) {
+    const trimmedEmail = email.trim();
+    const trimmedName = name.trim();
+    if (!trimmedEmail || !trimmedName) {
       setError('이메일과 이름을 입력하세요');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      setError('올바른 이메일 형식을 입력해 주세요 (예: user@example.com)');
       return;
     }
     if (password.length < 8) {
@@ -26,11 +33,11 @@ export default function SignupScreen() {
     }
     setSubmitting(true);
     try {
-      await signUp(email.trim(), name.trim(), password);
+      await signUp(trimmedEmail, trimmedName, password);
       // 가입 성공 → 로그인 페이지로 이동 (안내 배너 표시)
       router.replace('/(auth)/login?registered=1');
     } catch (err) {
-      setError(err instanceof ApiError ? String(err.detail ?? err.message) : '회원가입에 실패했습니다');
+      setError(getErrorMessage(err, '회원가입에 실패했습니다'));
     } finally {
       setSubmitting(false);
     }

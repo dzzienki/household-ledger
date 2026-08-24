@@ -5,7 +5,7 @@ import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, 
 import { notify } from '@/lib/dialog';
 
 import { AmountInput } from '@/components/amount-input';
-import { ApiError, api, apiUpload } from '@/lib/api';
+import { ApiError, api, apiUpload, getErrorMessage } from '@/lib/api';
 import { CURRENCIES } from '@/lib/currencies';
 import type { CategorySuggestion, Category, Ledger, ReceiptExtraction, Tag, Transaction, TransactionType } from '@/lib/types';
 
@@ -123,8 +123,7 @@ export function TransactionForm({
       }
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : 'AI 호출 실패';
-      notify('AI 추천 실패', msg);
+      notify('AI 추천 실패', getErrorMessage(err, 'AI 호출 실패'));
     },
   });
 
@@ -156,8 +155,7 @@ export function TransactionForm({
       setAiTip(`영수증 분석 완료 (신뢰도 ${(extraction.confidence * 100).toFixed(0)}%)`);
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '영수증 분석 실패';
-      notify('OCR 실패', msg);
+      notify('OCR 실패', getErrorMessage(err, '영수증 분석 실패'));
     },
   });
 

@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 
 import { AmountInput } from '@/components/amount-input';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, getErrorMessage } from '@/lib/api';
 import { CATEGORY_COLOR_PALETTE } from '@/lib/colors';
 import { confirmAsync, notify } from '@/lib/dialog';
 import { formatCurrency } from '@/lib/format';
@@ -54,8 +54,7 @@ export default function BudgetsScreen() {
       queryClient.invalidateQueries({ queryKey: ['budgets', 'status', ledgerId] });
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '삭제 실패'));
     },
   });
 
@@ -245,8 +244,7 @@ function CategoryEditor({
       onClose();
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '저장 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '저장 실패'));
     },
   });
 
@@ -334,8 +332,7 @@ function BudgetEditor({
       onClose();
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : (err as Error).message;
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '저장 실패'));
     },
   });
 
@@ -346,8 +343,7 @@ function BudgetEditor({
       onClose();
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? String(err.detail ?? err.message) : '삭제 실패';
-      notify('오류', msg);
+      notify('오류', getErrorMessage(err, '삭제 실패'));
     },
   });
 
