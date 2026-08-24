@@ -2,13 +2,14 @@ import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { ApiError, getErrorMessage } from '@/lib/api';
+import { ApiError, api, getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import type { InvitationAcceptResponse } from '@/lib/types';
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
   const router = useRouter();
-  const { registered } = useLocalSearchParams<{ registered?: string }>();
+  const { registered, invite_code } = useLocalSearchParams<{ registered?: string; invite_code?: string }>();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -29,6 +30,17 @@ export default function LoginScreen() {
     setSubmitting(true);
     try {
       await signIn(trimmedEmail, password);
+      if (invite_code) {
+        try {
+          const res = await api<InvitationAcceptResponse>(`/api/invitations/${invite_code}/accept`, {
+            method: 'POST',
+          });
+          router.replace(`/(app)/ledger/${res.ledger_id}`);
+          return;
+        } catch {
+          // fallback to app
+        }
+      }
       router.replace('/(app)');
     } catch (err) {
       setError(getErrorMessage(err, '로그인에 실패했습니다'));
@@ -36,6 +48,10 @@ export default function LoginScreen() {
       setSubmitting(false);
     }
   }
+
+  const signupHref = invite_code
+    ? `/(auth)/signup?invite_code=${encodeURIComponent(invite_code)}`
+    : '/(auth)/signup';
 
   return (
     <KeyboardAvoidingView
@@ -47,6 +63,10 @@ export default function LoginScreen() {
 
         {registered && (
           <Text style={styles.success}>회원가입이 완료됐습니다. 로그인해 주세요.</Text>
+        )}
+
+        {invite_code && (
+          <Text style={styles.inviteNotice}>가계부 초대를 수락하려면 로그인하세요.</Text>
         )}
 
         <TextInput
@@ -78,7 +98,7 @@ export default function LoginScreen() {
           {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>로그인</Text>}
         </Pressable>
 
-        <Link href="/(auth)/signup" style={styles.link}>
+        <Link href={signupHref as any} style={styles.link}>
           계정이 없으신가요? 회원가입
         </Link>
       </View>
@@ -111,4 +131,5 @@ const styles = StyleSheet.create({
   link: { textAlign: 'center', marginTop: 20, color: '#3B82F6' },
   error: { color: '#DC2626', fontSize: 14, marginBottom: 8, textAlign: 'center' },
   success: { color: '#16A34A', fontSize: 14, marginBottom: 16, textAlign: 'center' },
+  inviteNotice: { color: '#2563EB', fontSize: 14, marginBottom: 16, textAlign: 'center', fontWeight: '600' },
 });

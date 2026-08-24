@@ -135,3 +135,34 @@ export interface ReceiptExtraction {
   confidence: number;
   reasoning: string;
 }
+
+export interface InvitationPublic {
+  id: string;
+  ledger_id: string;
+  code: string;
+  role: LedgerRole;
+  created_by_id: string;
+  expires_at: string | null;
+  use_count: number;
+  max_uses: number | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface InvitationInfo {
+  code: string;
+  ledger_id: string;
+  ledger_name: string;
+  ledger_type: string;
+  inviter_name: string;
+  role: LedgerRole;
+  is_valid: boolean;
+  message?: string | null;
+}
+
+export interface InvitationAcceptResponse {
+  ledger_id: string;
+  ledger_name: string;
+  role: LedgerRole;
+  already_member: boolean;
+}

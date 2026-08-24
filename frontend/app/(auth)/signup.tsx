@@ -1,4 +1,4 @@
-import { Link, useRouter } from 'expo-router';
+import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth';
 export default function SignupScreen() {
   const { signUp } = useAuth();
   const router = useRouter();
+  const { invite_code } = useLocalSearchParams<{ invite_code?: string }>();
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
@@ -35,13 +36,20 @@ export default function SignupScreen() {
     try {
       await signUp(trimmedEmail, trimmedName, password);
       // 가입 성공 → 로그인 페이지로 이동 (안내 배너 표시)
-      router.replace('/(auth)/login?registered=1');
+      const target = invite_code
+        ? `/(auth)/login?registered=1&invite_code=${encodeURIComponent(invite_code)}`
+        : '/(auth)/login?registered=1';
+      router.replace(target as any);
     } catch (err) {
       setError(getErrorMessage(err, '회원가입에 실패했습니다'));
     } finally {
       setSubmitting(false);
     }
   }
+
+  const loginHref = invite_code
+    ? `/(auth)/login?invite_code=${encodeURIComponent(invite_code)}`
+    : '/(auth)/login';
 
   return (
     <KeyboardAvoidingView
@@ -50,6 +58,10 @@ export default function SignupScreen() {
     >
       <View style={styles.inner}>
         <Text style={styles.title}>회원가입</Text>
+
+        {invite_code && (
+          <Text style={styles.inviteNotice}>가입 후 가계부 초대에 자동으로 참여됩니다.</Text>
+        )}
 
         <TextInput
           style={styles.input}
@@ -84,7 +96,7 @@ export default function SignupScreen() {
           {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>가입하기</Text>}
         </Pressable>
 
-        <Link href="/(auth)/login" style={styles.link}>
+        <Link href={loginHref as any} style={styles.link}>
           이미 계정이 있으신가요? 로그인
         </Link>
       </View>
@@ -116,4 +128,5 @@ const styles = StyleSheet.create({
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   link: { textAlign: 'center', marginTop: 20, color: '#3B82F6' },
   error: { color: '#DC2626', fontSize: 14, marginBottom: 8, textAlign: 'center' },
+  inviteNotice: { color: '#2563EB', fontSize: 14, marginBottom: 16, textAlign: 'center', fontWeight: '600' },
 });

@@ -21,6 +21,7 @@ export default function RootLayout() {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(app)" />
+            <Stack.Screen name="invite" options={{ title: '가계부 초대', headerShown: false }} />
           </Stack>
           <StatusBar style="auto" />
         </ThemeProvider>

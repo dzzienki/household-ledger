@@ -1,6 +1,7 @@
 from app.models.budget import Budget
 from app.models.category import Category, TransactionType
 from app.models.exchange_rate import ExchangeRate
+from app.models.invitation import LedgerInvitation
 from app.models.ledger import Ledger, LedgerMember, LedgerRole, LedgerType
 from app.models.recurring import RecurrenceFrequency, RecurringTransaction
 from app.models.tag import Tag, TransactionTag
@@ -12,6 +13,7 @@ __all__ = [
     "Category",
     "ExchangeRate",
     "Ledger",
+    "LedgerInvitation",
     "LedgerMember",
     "LedgerRole",
     "LedgerType",
