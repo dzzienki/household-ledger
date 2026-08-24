@@ -63,7 +63,7 @@ ok "배포 완료"
 
 # --- 헬스 체크 ---
 info "Nginx 정상 응답 확인..."
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PROBE_URL")
+STATUS=$(curl -s -k -L -o /dev/null -w "%{http_code}" "$PROBE_URL")
 if [ "$STATUS" = "200" ]; then
   ok "$PROBE_URL → 200 OK"
 else
