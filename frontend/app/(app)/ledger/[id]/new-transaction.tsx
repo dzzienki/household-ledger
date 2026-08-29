@@ -22,6 +22,7 @@ export default function NewTransactionScreen() {
       api<Transaction>(`/api/ledgers/${ledgerId}/transactions`, { method: 'POST', body }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['summary', ledgerId] });
       queryClient.invalidateQueries({ queryKey: ['stats'] });
       queryClient.invalidateQueries({ queryKey: ['items'] });
       // router.back() 은 웹에서 히스토리 없으면 무동작 → 목록으로 확실히 이동

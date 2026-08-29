@@ -176,7 +176,12 @@ export function TransactionForm({
     },
     onSuccess: ({ extraction, suggested_category_id }) => {
       setType('expense');
-      if (extraction.amount) setAmount(String(extraction.amount));
+      const itemsSum = (extraction.items || []).reduce((s, it) => s + (Number(it.total_price) || 0), 0);
+      if (extraction.amount) {
+        setAmount(String(extraction.amount));
+      } else if (itemsSum > 0) {
+        setAmount(String(itemsSum));
+      }
       if (extraction.transaction_date) setTransactionDate(extraction.transaction_date);
       if (extraction.payee) setPayee(extraction.payee);
       if (extraction.memo) setMemo(extraction.memo);

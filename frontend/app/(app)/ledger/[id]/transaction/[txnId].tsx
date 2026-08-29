@@ -28,6 +28,7 @@ export default function EditTransactionScreen() {
   function invalidate() {
     queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
     queryClient.invalidateQueries({ queryKey: ['transaction', ledgerId, txnId] });
+    queryClient.invalidateQueries({ queryKey: ['summary', ledgerId] });
     queryClient.invalidateQueries({ queryKey: ['stats'] });
     queryClient.invalidateQueries({ queryKey: ['items'] });
   }

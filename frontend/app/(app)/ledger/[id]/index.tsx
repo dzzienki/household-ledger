@@ -513,8 +513,11 @@ export default function LedgerDetailScreen() {
           keyExtractor={(t) => t.id}
           contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-          refreshing={txnQuery.isRefetching}
-          onRefresh={() => txnQuery.refetch()}
+          refreshing={txnQuery.isRefetching || summaryQuery.isRefetching}
+          onRefresh={() => {
+            txnQuery.refetch();
+            summaryQuery.refetch();
+          }}
           renderItem={({ item }) => {
             const category = item.category_id ? categoriesById.get(item.category_id) : null;
             return (
