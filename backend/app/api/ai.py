@@ -11,6 +11,7 @@ from app.services.ai import (
     CategorySuggestion,
     ReceiptExtraction,
     extract_receipt,
+    get_ai_status,
     is_ai_enabled,
     suggest_category,
 )
@@ -25,8 +26,8 @@ class CategorizeRequest(BaseModel):
 
 
 @router.get("/status")
-async def ai_status() -> dict[str, bool]:
-    return {"enabled": is_ai_enabled()}
+async def ai_status() -> dict:
+    return get_ai_status()
 
 
 @router.post("/categorize", response_model=CategorySuggestion)

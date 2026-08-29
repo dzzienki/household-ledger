@@ -124,6 +124,7 @@ export interface CategorySuggestion {
   category_name: string | null;
   confidence: number;
   reasoning: string;
+  provider?: string | null;
 }
 
 export interface ReceiptExtraction {
@@ -134,6 +135,7 @@ export interface ReceiptExtraction {
   suggested_category_name: string | null;
   confidence: number;
   reasoning: string;
+  provider?: string | null;
 }
 
 export interface InvitationPublic {

@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { notify } from '@/lib/dialog';
 
 import { AmountInput } from '@/components/amount-input';
@@ -84,7 +84,7 @@ export function TransactionForm({
 
   const aiStatusQuery = useQuery({
     queryKey: ['ai', 'status', ledgerId],
-    queryFn: () => api<{ enabled: boolean }>(`/api/ledgers/${ledgerId}/ai/status`),
+    queryFn: () => api<{ enabled: boolean; primary?: string; strategy?: string }>(`/api/ledgers/${ledgerId}/ai/status`),
     enabled: !!ledgerId,
   });
   const aiEnabled = aiStatusQuery.data?.enabled === true;
@@ -159,7 +159,24 @@ export function TransactionForm({
     },
   });
 
-  async function pickReceipt() {
+  async function pickReceiptFromCamera() {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      notify('권한 필요', '영수증을 촬영하려면 카메라 접근 권한이 필요합니다');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsEditing: false,
+    });
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    setPreviewUri(asset.uri);
+    ocrMutation.mutate(asset);
+  }
+
+  async function pickReceiptFromLibrary() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       notify('권한 필요', '영수증 사진을 선택하려면 사진 접근 권한이 필요합니다');
@@ -167,13 +184,30 @@ export function TransactionForm({
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
+      quality: 0.8,
       allowsEditing: false,
     });
     if (result.canceled) return;
     const asset = result.assets[0];
     setPreviewUri(asset.uri);
     ocrMutation.mutate(asset);
+  }
+
+  function handleReceiptAction() {
+    if (Platform.OS === 'web') {
+      pickReceiptFromLibrary();
+      return;
+    }
+    Alert.alert(
+      '영수증 사진 입력',
+      '영수증을 가져올 방법을 선택하세요',
+      [
+        { text: '📷 카메라로 촬영', onPress: pickReceiptFromCamera },
+        { text: '🖼️ 사진 보관함에서 선택', onPress: pickReceiptFromLibrary },
+        { text: '취소', style: 'cancel' },
+      ],
+      { cancelable: true },
+    );
   }
 
   function handleSubmit() {
@@ -204,7 +238,7 @@ export function TransactionForm({
         <Pressable
           style={[styles.aiButton, ocrMutation.isPending && { opacity: 0.6 }]}
           disabled={ocrMutation.isPending}
-          onPress={pickReceipt}
+          onPress={handleReceiptAction}
         >
           {ocrMutation.isPending ? (
             <ActivityIndicator color="#fff" />

@@ -1,6 +1,5 @@
 from functools import lru_cache
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,8 +21,9 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: str = ""
 
-    ANTHROPIC_API_KEY: str | None = None
-    ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-3.6-flash"
+
     UPLOAD_DIR: str = "uploads"
 
     @property
