@@ -18,3 +18,4 @@ export const storage = {
 
 export const ACCESS_TOKEN_KEY = 'ledger.accessToken';
 export const REFRESH_TOKEN_KEY = 'ledger.refreshToken';
+export const REMEMBERED_EMAIL_KEY = 'ledger.rememberedEmail';

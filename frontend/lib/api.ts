@@ -1,4 +1,4 @@
-import { ACCESS_TOKEN_KEY, storage } from './storage';
+import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, storage } from './storage';
 
 const DEFAULT_API_URL = 'http://localhost:8000';
 export const API_URL =
@@ -165,15 +165,59 @@ export function getErrorMessage(err: unknown, fallback = '오류가 발생했습
   return fallback;
 }
 
+let refreshPromise: Promise<string | null> | null = null;
+
+export async function tryRefreshToken(): Promise<string | null> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const refreshToken = await storage.get(REFRESH_TOKEN_KEY);
+      if (!refreshToken) return null;
+
+      const res = await fetch(`${API_URL}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+
+      if (!res.ok) {
+        await storage.remove(ACCESS_TOKEN_KEY);
+        await storage.remove(REFRESH_TOKEN_KEY);
+        return null;
+      }
+
+      const data = await res.json();
+      if (data.access_token) {
+        await storage.set(ACCESS_TOKEN_KEY, data.access_token);
+        if (data.refresh_token) {
+          await storage.set(REFRESH_TOKEN_KEY, data.refresh_token);
+        }
+        return data.access_token as string;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   auth?: boolean;
   signal?: AbortSignal;
+  _retry?: boolean;
 };
 
 export async function api<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, auth = true, signal } = opts;
+  const { method = 'GET', body, auth = true, signal, _retry = false } = opts;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
   if (auth) {
@@ -188,6 +232,13 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
   });
+
+  if (res.status === 401 && auth && !_retry && !path.includes('/auth/login') && !path.includes('/auth/refresh')) {
+    const newToken = await tryRefreshToken();
+    if (newToken) {
+      return api<T>(path, { ...opts, _retry: true });
+    }
+  }
 
   if (res.status === 204) return undefined as T;
 
@@ -209,13 +260,21 @@ function safeParseJson(text: string): unknown {
   }
 }
 
-export async function apiUpload<T = unknown>(path: string, formData: FormData): Promise<T> {
+export async function apiUpload<T = unknown>(path: string, formData: FormData, _retry = false): Promise<T> {
   const token = await storage.get(ACCESS_TOKEN_KEY);
   const url = `${API_URL}${path.startsWith('/') ? path : `/${path}`}`;
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const res = await fetch(url, { method: 'POST', headers, body: formData });
+
+  if (res.status === 401 && !_retry) {
+    const newToken = await tryRefreshToken();
+    if (newToken) {
+      return apiUpload<T>(path, formData, true);
+    }
+  }
+
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   const payload = text ? safeParseJson(text) : undefined;
@@ -226,12 +285,20 @@ export async function apiUpload<T = unknown>(path: string, formData: FormData): 
   return payload as T;
 }
 
-export async function apiDownloadBlob(path: string): Promise<Blob> {
+export async function apiDownloadBlob(path: string, _retry = false): Promise<Blob> {
   const token = await storage.get(ACCESS_TOKEN_KEY);
   const url = `${API_URL}${path.startsWith('/') ? path : `/${path}`}`;
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(url, { headers });
+
+  if (res.status === 401 && !_retry) {
+    const newToken = await tryRefreshToken();
+    if (newToken) {
+      return apiDownloadBlob(path, true);
+    }
+  }
+
   if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.blob();
 }

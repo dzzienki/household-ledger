@@ -1,10 +1,18 @@
+from uuid import UUID
+
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
 from app.api.deps import DbDep
-from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 from app.models import Ledger, LedgerMember, LedgerRole, LedgerType, User
-from app.schemas.auth import LoginRequest, SignupRequest, TokenResponse
+from app.schemas.auth import LoginRequest, RefreshRequest, SignupRequest, TokenResponse
 from app.schemas.user import UserPublic
 from app.services.categories import seed_default_categories
 
@@ -47,6 +55,35 @@ async def login(payload: LoginRequest, db: DbDep) -> TokenResponse:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
+
+    return TokenResponse(
+        access_token=create_access_token(user.id),
+        refresh_token=create_refresh_token(user.id),
+    )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(payload: RefreshRequest, db: DbDep) -> TokenResponse:
+    try:
+        data = decode_token(payload.refresh_token)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    if data.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="Invalid token type")
+
+    sub = data.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    try:
+        user_id = UUID(sub)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid user ID in token")
+
+    user = (await db.exec(select(User).where(User.id == user_id))).first()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
 
     return TokenResponse(
         access_token=create_access_token(user.id),

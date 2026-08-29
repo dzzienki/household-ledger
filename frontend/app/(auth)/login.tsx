@@ -1,9 +1,10 @@
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ApiError, api, getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { REMEMBERED_EMAIL_KEY, storage } from '@/lib/storage';
 import type { InvitationAcceptResponse } from '@/lib/types';
 
 export default function LoginScreen() {
@@ -12,8 +13,19 @@ export default function LoginScreen() {
   const { registered, invite_code } = useLocalSearchParams<{ registered?: string; invite_code?: string }>();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberEmail, setRememberEmail] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const savedEmail = await storage.get(REMEMBERED_EMAIL_KEY);
+      if (savedEmail) {
+        setEmail(savedEmail);
+        setRememberEmail(true);
+      }
+    })();
+  }, []);
 
   async function onSubmit() {
     setError(null);
@@ -29,6 +41,11 @@ export default function LoginScreen() {
     }
     setSubmitting(true);
     try {
+      if (rememberEmail) {
+        await storage.set(REMEMBERED_EMAIL_KEY, trimmedEmail);
+      } else {
+        await storage.remove(REMEMBERED_EMAIL_KEY);
+      }
       await signIn(trimmedEmail, password);
       if (invite_code) {
         try {
@@ -88,6 +105,17 @@ export default function LoginScreen() {
           onSubmitEditing={onSubmit}
         />
 
+        {/* 이메일 기억하기 토글 */}
+        <Pressable
+          style={styles.rememberRow}
+          onPress={() => setRememberEmail((prev) => !prev)}
+        >
+          <View style={[styles.checkbox, rememberEmail && styles.checkboxActive]}>
+            {rememberEmail && <Text style={styles.checkmark}>✓</Text>}
+          </View>
+          <Text style={styles.rememberText}>이메일 기억하기</Text>
+        </Pressable>
+
         {error && <Text style={styles.error}>{error}</Text>}
 
         <Pressable
@@ -132,4 +160,18 @@ const styles = StyleSheet.create({
   error: { color: '#DC2626', fontSize: 14, marginBottom: 8, textAlign: 'center' },
   success: { color: '#16A34A', fontSize: 14, marginBottom: 16, textAlign: 'center' },
   inviteNotice: { color: '#2563EB', fontSize: 14, marginBottom: 16, textAlign: 'center', fontWeight: '600' },
+  rememberRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, marginBottom: 12 },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#9CA3AF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  checkboxActive: { backgroundColor: '#3B82F6', borderColor: '#3B82F6' },
+  checkmark: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  rememberText: { fontSize: 14, color: '#4B5563' },
 });

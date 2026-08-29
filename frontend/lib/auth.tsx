@@ -39,8 +39,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     (async () => {
-      const token = await storage.get(ACCESS_TOKEN_KEY);
-      if (token) await refreshUser();
+      const accessToken = await storage.get(ACCESS_TOKEN_KEY);
+      const refreshToken = await storage.get(REFRESH_TOKEN_KEY);
+      if (accessToken || refreshToken) {
+        await refreshUser();
+      }
       setLoading(false);
     })();
   }, [refreshUser]);
