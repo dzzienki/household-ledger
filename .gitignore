@@ -9,6 +9,11 @@
 doc/*.xls
 doc/*.xlsx
 doc/*.csv
+doc/*.pdf
+doc/*.zip
+doc/*.jpg
+doc/*.png
+doc/samples/
 
 # Python
 __pycache__/

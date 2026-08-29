@@ -232,3 +232,32 @@ export interface LedgerSummary {
   prev_period_expense: string;
   has_income: boolean;
 }
+
+export interface StatementItemPreview {
+  transaction_date: string;
+  payee: string;
+  amount: number;
+  type: TransactionType;
+  currency: string;
+  memo: string | null;
+  category_id: string | null;
+  category_name: string | null;
+  card_name?: string | null;
+  approval_no?: string | null;
+  is_duplicate: boolean;
+  is_selected: boolean;
+}
+
+export interface StatementParseResponse {
+  card_company: string | null;
+  total_count: number;
+  total_amount: number;
+  requires_password: boolean;
+  error_message: string | null;
+  items: StatementItemPreview[];
+}
+
+export interface StatementImportResponse {
+  imported_count: number;
+  total_amount: number;
+}

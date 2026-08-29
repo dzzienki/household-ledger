@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -26,6 +26,7 @@ interface StatementResult {
 
 export default function DataScreen() {
   const { id: ledgerId } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [downloading, setDownloading] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -164,6 +165,23 @@ export default function DataScreen() {
     <View style={styles.container}>
       <Stack.Screen options={{ title: '데이터 가져오기/내보내기' }} />
 
+      {/* 스마트 카드 명세서 일괄 분석 & 등록 */}
+      <View style={[styles.card, styles.highlightCard]}>
+        <View style={styles.highlightBadge}>
+          <Text style={styles.highlightBadgeText}>✨ AI & 스마트 파싱</Text>
+        </View>
+        <Text style={styles.cardTitle}>카드 이용대금명세서 자동 분석 & 등록</Text>
+        <Text style={styles.cardHint}>
+          국민카드, 농협카드, 현대카드 등 모든 카드사의 엑셀(.xlsx/.xls), PDF, CSV, 또는 화면 캡처 이미지를 올리면 소비 내역과 카테고리를 자동으로 분석하여 미리보기 후 원하는 항목만 일괄 등록합니다.
+        </Text>
+        <Pressable
+          style={[styles.button, styles.highlightButton]}
+          onPress={() => router.push(`/(app)/ledger/${ledgerId}/statement-import`)}
+        >
+          <Text style={styles.highlightButtonText}>🚀 카드 명세서 스마트 가져오기 시작</Text>
+        </Pressable>
+      </View>
+
       <View style={styles.card}>
         <Text style={styles.cardTitle}>CSV로 내보내기</Text>
         <Text style={styles.cardHint}>
@@ -280,4 +298,20 @@ const styles = StyleSheet.create({
   resultText: { fontWeight: '600', color: '#16A34A', marginBottom: 4 },
   errorTitle: { color: '#DC2626', fontWeight: '600', marginTop: 8 },
   errorLine: { color: '#7F1D1D', fontSize: 12, marginTop: 2 },
+  highlightCard: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+    borderWidth: 1.5,
+  },
+  highlightBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#4F46E5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    marginBottom: 8,
+  },
+  highlightBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  highlightButton: { backgroundColor: '#4F46E5' },
+  highlightButtonText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });

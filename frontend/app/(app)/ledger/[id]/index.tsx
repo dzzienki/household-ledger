@@ -492,15 +492,15 @@ export default function LedgerDetailScreen() {
       </View>
 
       <View style={styles.quickRow}>
+        <QuickButton label="📄 명세서 가져오기" onPress={() => router.push(`/(app)/ledger/${id}/statement-import`)} />
         <QuickButton label="🛒 품목 가격 검색" onPress={() => router.push(`/(app)/ledger/${id}/items-history`)} />
-        <QuickButton label="예산·카테고리" onPress={() => router.push(`/(app)/ledger/${id}/budgets`)} />
         <QuickButton label="통계" onPress={() => router.push(`/(app)/ledger/${id}/stats`)} />
       </View>
       <View style={styles.quickRow}>
+        <QuickButton label="예산·카테고리" onPress={() => router.push(`/(app)/ledger/${id}/budgets`)} />
         <QuickButton label="반복 거래" onPress={() => router.push(`/(app)/ledger/${id}/recurring`)} />
         <QuickButton label="태그" onPress={() => router.push(`/(app)/ledger/${id}/tags`)} />
-        <QuickButton label="환율" onPress={() => router.push(`/(app)/ledger/${id}/exchange-rates`)} />
-        <QuickButton label="가져오기" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
+        <QuickButton label="데이터" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
       </View>
 
       {txnQuery.isLoading ? (

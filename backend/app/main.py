@@ -13,6 +13,7 @@ from app.api import (
     items,
     ledgers,
     recurring,
+    statements,
     stats,
     tags,
     transactions,
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(recurring.router, prefix=api_prefix)
     app.include_router(budgets.router, prefix=api_prefix)
     app.include_router(csv_io.router, prefix=api_prefix)
+    app.include_router(statements.router, prefix=api_prefix)
     app.include_router(ai.router, prefix=api_prefix)
 
     return app
