@@ -1,12 +1,11 @@
 import secrets
 from datetime import datetime
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import select
 
-from app.api.deps import CurrentUser, DbDep, get_ledger_membership, require_role
+from app.api.deps import CurrentUser, DbDep, require_role
 from app.models import Ledger, LedgerInvitation, LedgerMember, LedgerRole, User
 from app.schemas.invitation import (
     InvitationAcceptResponse,

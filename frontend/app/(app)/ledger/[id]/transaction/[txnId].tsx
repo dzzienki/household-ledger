@@ -29,6 +29,7 @@ export default function EditTransactionScreen() {
     queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
     queryClient.invalidateQueries({ queryKey: ['transaction', ledgerId, txnId] });
     queryClient.invalidateQueries({ queryKey: ['stats'] });
+    queryClient.invalidateQueries({ queryKey: ['items'] });
   }
 
   // router.back() 은 웹에서 히스토리가 없으면 무동작이라, 목록으로 확실히 이동시킨다.

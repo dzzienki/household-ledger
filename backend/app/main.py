@@ -10,6 +10,7 @@ from app.api import (
     exchange_rates,
     health,
     invitations,
+    items,
     ledgers,
     recurring,
     stats,
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(tags.router, prefix=api_prefix)
     app.include_router(exchange_rates.router, prefix=api_prefix)
     app.include_router(transactions.router, prefix=api_prefix)
+    app.include_router(items.router, prefix=api_prefix)
     app.include_router(stats.router, prefix=api_prefix)
     app.include_router(recurring.router, prefix=api_prefix)
     app.include_router(budgets.router, prefix=api_prefix)

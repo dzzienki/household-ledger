@@ -51,6 +51,19 @@ export interface ExchangeRate {
   rate_to_base: string;
 }
 
+export interface TransactionItem {
+  id?: string;
+  transaction_id?: string;
+  ledger_id?: string;
+  name: string;
+  item_group?: string | null;
+  quantity: number;
+  unit_price?: number | null;
+  total_price: number;
+  memo?: string | null;
+  created_at?: string;
+}
+
 export interface Transaction {
   id: string;
   ledger_id: string;
@@ -63,6 +76,7 @@ export interface Transaction {
   payee: string | null;
   memo: string | null;
   tags: Tag[];
+  items?: TransactionItem[];
   created_at: string;
 }
 
@@ -136,6 +150,44 @@ export interface ReceiptExtraction {
   confidence: number;
   reasoning: string;
   provider?: string | null;
+  items?: TransactionItem[];
+}
+
+export interface ItemPriceHistoryEntry {
+  id: string;
+  transaction_id: string;
+  transaction_date: string;
+  payee: string | null;
+  name: string;
+  item_group: string | null;
+  quantity: number;
+  unit_price: number | null;
+  total_price: number;
+  currency: string;
+  memo: string | null;
+}
+
+export interface ItemPriceStats {
+  query: string;
+  count: number;
+  latest_unit_price: number | null;
+  latest_date: string | null;
+  latest_payee: string | null;
+  min_unit_price: number | null;
+  max_unit_price: number | null;
+  avg_unit_price: number | null;
+  currency: string;
+}
+
+export interface ItemPriceHistoryResponse {
+  stats: ItemPriceStats;
+  history: ItemPriceHistoryEntry[];
+}
+
+export interface ItemGroupSummary {
+  item_group: string;
+  item_count: number;
+  latest_date: string | null;
 }
 
 export interface InvitationPublic {

@@ -492,14 +492,15 @@ export default function LedgerDetailScreen() {
       </View>
 
       <View style={styles.quickRow}>
+        <QuickButton label="🛒 품목 가격 검색" onPress={() => router.push(`/(app)/ledger/${id}/items-history`)} />
         <QuickButton label="예산·카테고리" onPress={() => router.push(`/(app)/ledger/${id}/budgets`)} />
-        <QuickButton label="태그" onPress={() => router.push(`/(app)/ledger/${id}/tags`)} />
-        <QuickButton label="환율" onPress={() => router.push(`/(app)/ledger/${id}/exchange-rates`)} />
+        <QuickButton label="통계" onPress={() => router.push(`/(app)/ledger/${id}/stats`)} />
       </View>
       <View style={styles.quickRow}>
         <QuickButton label="반복 거래" onPress={() => router.push(`/(app)/ledger/${id}/recurring`)} />
-        <QuickButton label="통계" onPress={() => router.push(`/(app)/ledger/${id}/stats`)} />
-        <QuickButton label="파일 가져오기" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
+        <QuickButton label="태그" onPress={() => router.push(`/(app)/ledger/${id}/tags`)} />
+        <QuickButton label="환율" onPress={() => router.push(`/(app)/ledger/${id}/exchange-rates`)} />
+        <QuickButton label="가져오기" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
       </View>
 
       {txnQuery.isLoading ? (
@@ -528,6 +529,11 @@ export default function LedgerDetailScreen() {
                     <Text style={styles.rowMeta}>
                       {category?.name ?? '미분류'} · {formatDate(item.transaction_date)}
                     </Text>
+                    {item.items && item.items.length > 0 && (
+                      <Text style={styles.rowItemsPreview}>
+                        🛒 {item.items[0].name}{item.items.length > 1 ? ` 외 ${item.items.length - 1}건` : ''}
+                      </Text>
+                    )}
                     {item.tags.length > 0 && (
                       <View style={styles.rowTags}>
                         {item.tags.map((t) => (
@@ -810,6 +816,7 @@ const styles = StyleSheet.create({
   rowTextWrap: { flex: 1 },
   rowTitle: { fontSize: 15, fontWeight: '600' },
   rowMeta: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  rowItemsPreview: { fontSize: 11, color: '#4F46E5', marginTop: 2, fontWeight: '500' },
   rowTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   rowTag: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 1 },
   rowTagText: { fontSize: 10, fontWeight: '600' },

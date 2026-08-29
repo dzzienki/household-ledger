@@ -23,6 +23,7 @@ export default function NewTransactionScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
       queryClient.invalidateQueries({ queryKey: ['stats'] });
+      queryClient.invalidateQueries({ queryKey: ['items'] });
       // router.back() 은 웹에서 히스토리 없으면 무동작 → 목록으로 확실히 이동
       router.replace(`/(app)/ledger/${ledgerId}`);
     },

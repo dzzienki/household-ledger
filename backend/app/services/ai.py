@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -65,6 +65,15 @@ class CategorySuggestion:
 
 
 @dataclass
+class ReceiptItem:
+    name: str
+    item_group: str | None
+    quantity: float
+    unit_price: float | None
+    total_price: float
+
+
+@dataclass
 class ReceiptExtraction:
     amount: float | None
     transaction_date: str | None
@@ -73,6 +82,7 @@ class ReceiptExtraction:
     suggested_category_name: str | None
     confidence: float
     reasoning: str
+    items: list[ReceiptItem] = field(default_factory=list)
 
 
 def suggest_category(
@@ -155,7 +165,7 @@ def extract_receipt(
     media_type: str,
     categories: list[Category],
 ) -> ReceiptExtraction:
-    """Read a receipt image and pull amount/date/payee plus category using Gemini Vision."""
+    """Read a receipt image and pull amount/date/payee plus line items using Gemini Vision."""
     if not is_ai_enabled():
         raise RuntimeError("AI features are disabled (no GEMINI_API_KEY)")
 
@@ -163,16 +173,32 @@ def extract_receipt(
     catalog = ", ".join(expense_cats) or "(none)"
 
     system = (
-        "You read photos of Korean receipts and extract the structured fields. "
+        "You read photos of Korean receipts and extract structured fields and detailed line items. "
         "Always reply with JSON only — no markdown, no commentary.\n\n"
         f"Available expense categories: {catalog}\n\n"
-        "Respond with: "
-        '{"amount": <number or null>, "transaction_date": "<YYYY-MM-DD or null>", '
-        '"payee": "<merchant or null>", "memo": "<short summary or null>", '
-        '"suggested_category_name": "<exact name from list or null>", '
-        '"confidence": <0.0-1.0>, "reasoning": "<short>"}\n'
-        "Amount must be the total / 결제금액 (not a single line item). "
-        "If a value is unclear, set it to null."
+        "Respond with this exact JSON schema: "
+        '{\n'
+        '  "amount": <total paid number or null>,\n'
+        '  "transaction_date": "<YYYY-MM-DD or null>",\n'
+        '  "payee": "<store/merchant name or null>",\n'
+        '  "memo": "<brief 1-line summary or null>",\n'
+        '  "suggested_category_name": "<exact name from list or null>",\n'
+        '  "confidence": <0.0-1.0>,\n'
+        '  "reasoning": "<short explanation>",\n'
+        '  "items": [\n'
+        '    {\n'
+        '      "name": "<printed item name on receipt, e.g. 신라면 5입, 햇양파 1.5kg, 서울우유 1L>",\n'
+        '      "item_group": "<normalized generic category/group name in Korean, e.g. 라면, 양파, 우유, 계란, 두부, 과자, 커피, 생수, 휴지, 세제, 육류, 채소 or null>",\n'
+        '      "quantity": <number, default 1>,\n'
+        '      "unit_price": <unit price number or null>,\n'
+        '      "total_price": <line total price number>\n'
+        '    }\n'
+        '  ]\n'
+        '}\n'
+        "Rules:\n"
+        "1. 'amount' must be the final total payment (결제금액 / 합계금액).\n"
+        "2. 'items' should contain all purchasable products clearly visible on the receipt. If item prices or quantities are unclear, infer reasonably from line item total.\n"
+        "3. 'item_group' must be a concise common noun representing the generic food/product group (e.g. '진라면 매운맛' -> '라면', '대파 한단' -> '대파' or '채소')."
     )
 
     try:
@@ -181,7 +207,7 @@ def extract_receipt(
             model=settings.GEMINI_MODEL,
             contents=[
                 genai_types.Part.from_bytes(data=image_bytes, mime_type=media_type),
-                "Extract the receipt fields.",
+                "Extract the receipt fields and line items.",
             ],
             config=genai_types.GenerateContentConfig(
                 system_instruction=system,
@@ -193,6 +219,29 @@ def extract_receipt(
     except Exception as exc:
         raise RuntimeError(f"Gemini API error: {exc}") from exc
 
+    raw_items = parsed.get("items") or []
+    items: list[ReceiptItem] = []
+    if isinstance(raw_items, list):
+        for it in raw_items:
+            if not isinstance(it, dict):
+                continue
+            name = str(it.get("name") or "").strip()
+            total_price = _to_float(it.get("total_price"))
+            if not name or total_price is None:
+                continue
+            qty = _to_float(it.get("quantity")) or 1.0
+            unit_p = _to_float(it.get("unit_price"))
+            group = str(it.get("item_group")).strip() if it.get("item_group") else None
+            items.append(
+                ReceiptItem(
+                    name=name,
+                    item_group=group,
+                    quantity=qty,
+                    unit_price=unit_p,
+                    total_price=total_price,
+                )
+            )
+
     return ReceiptExtraction(
         amount=_to_float(parsed.get("amount")),
         transaction_date=str(parsed["transaction_date"]) if parsed.get("transaction_date") else None,
@@ -203,4 +252,5 @@ def extract_receipt(
         else None,
         confidence=float(parsed.get("confidence") or 0),
         reasoning=str(parsed.get("reasoning") or ""),
+        items=items,
     )

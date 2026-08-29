@@ -15,11 +15,13 @@ from app.models import (
     LedgerRole,
     Tag,
     Transaction,
+    TransactionItem,
     TransactionTag,
 )
 from app.models.category import TransactionType
 from app.schemas.tag import TagPublic
 from app.schemas.transaction import TransactionCreate, TransactionPublic, TransactionUpdate
+from app.schemas.transaction_item import TransactionItemCreate, TransactionItemPublic
 from app.services.recurring import materialize_due_for_ledger
 
 router = APIRouter(prefix="/ledgers/{ledger_id}/transactions", tags=["transactions"])
@@ -91,7 +93,61 @@ async def _tags_by_transaction(
     return result
 
 
-def _to_public(txn: Transaction, tags: list[Tag]) -> TransactionPublic:
+async def _items_by_transaction(
+    db: AsyncSession, transaction_ids: Sequence[UUID]
+) -> dict[UUID, list[TransactionItem]]:
+    """Fetch items for a batch of transactions in one round-trip."""
+    if not transaction_ids:
+        return {}
+    stmt = (
+        select(TransactionItem)
+        .where(TransactionItem.transaction_id.in_(list(transaction_ids)))
+        .order_by(TransactionItem.created_at.asc())
+    )
+    result: dict[UUID, list[TransactionItem]] = {}
+    for item in (await db.exec(stmt)).all():
+        result.setdefault(item.transaction_id, []).append(item)
+    return result
+
+
+async def _set_transaction_items(
+    db: AsyncSession,
+    transaction_id: UUID,
+    ledger_id: UUID,
+    items: list[TransactionItemCreate],
+) -> list[TransactionItem]:
+    """Replace line items for a transaction."""
+    existing = list(
+        (
+            await db.exec(
+                select(TransactionItem).where(TransactionItem.transaction_id == transaction_id)
+            )
+        ).all()
+    )
+    for item in existing:
+        await db.delete(item)
+    created: list[TransactionItem] = []
+    for it in items:
+        new_item = TransactionItem(
+            transaction_id=transaction_id,
+            ledger_id=ledger_id,
+            name=it.name.strip(),
+            item_group=it.item_group.strip() if it.item_group and it.item_group.strip() else None,
+            quantity=it.quantity,
+            unit_price=it.unit_price,
+            total_price=it.total_price,
+            memo=it.memo.strip() if it.memo and it.memo.strip() else None,
+        )
+        db.add(new_item)
+        created.append(new_item)
+    return created
+
+
+def _to_public(
+    txn: Transaction,
+    tags: list[Tag],
+    items: list[TransactionItem] | None = None,
+) -> TransactionPublic:
     return TransactionPublic(
         id=txn.id,
         ledger_id=txn.ledger_id,
@@ -104,6 +160,7 @@ def _to_public(txn: Transaction, tags: list[Tag]) -> TransactionPublic:
         payee=txn.payee,
         memo=txn.memo,
         tags=[TagPublic.model_validate(t) for t in tags],
+        items=[TransactionItemPublic.model_validate(it) for it in (items or [])],
         created_at=txn.created_at,
     )
 
@@ -117,7 +174,7 @@ async def list_transactions(
     tag_id: UUID | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
-    q: str | None = Query(default=None, max_length=200, description="Search in payee/memo"),
+    q: str | None = Query(default=None, max_length=200, description="Search in payee/memo/item name"),
     limit: int = Query(default=100, le=500),
     offset: int = 0,
 ) -> list[TransactionPublic]:
@@ -141,15 +198,23 @@ async def list_transactions(
         stmt = stmt.where(Transaction.transaction_date <= end_date)
     if q:
         pattern = f"%{q.strip()}%"
+        matching_item_txn_ids = select(TransactionItem.transaction_id).where(
+            (TransactionItem.ledger_id == ledger.id)
+            & ((TransactionItem.name.ilike(pattern)) | (TransactionItem.item_group.ilike(pattern)))
+        )
         stmt = stmt.where(
-            (Transaction.payee.ilike(pattern)) | (Transaction.memo.ilike(pattern))
+            (Transaction.payee.ilike(pattern))
+            | (Transaction.memo.ilike(pattern))
+            | (Transaction.id.in_(matching_item_txn_ids))
         )
     stmt = stmt.order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc())
     stmt = stmt.offset(offset).limit(limit)
     txns = list((await db.exec(stmt)).all())
 
-    tag_map = await _tags_by_transaction(db, [t.id for t in txns])
-    return [_to_public(t, tag_map.get(t.id, [])) for t in txns]
+    txn_ids = [t.id for t in txns]
+    tag_map = await _tags_by_transaction(db, txn_ids)
+    item_map = await _items_by_transaction(db, txn_ids)
+    return [_to_public(t, tag_map.get(t.id, []), item_map.get(t.id, [])) for t in txns]
 
 
 @router.post("", response_model=TransactionPublic, status_code=status.HTTP_201_CREATED)
@@ -162,14 +227,19 @@ async def create_transaction(
     await _validate_category(db, ledger.id, payload.category_id, payload.type)
     tags = await _resolve_tags(db, ledger.id, payload.tag_ids)
 
-    data = payload.model_dump(exclude={"tag_ids"})
+    data = payload.model_dump(exclude={"tag_ids", "items"})
     txn = Transaction(ledger_id=ledger.id, created_by_id=member.user_id, **data)
     db.add(txn)
     await db.flush()
     await _set_transaction_tags(db, txn.id, [t.id for t in tags])
+
+    items: list[TransactionItem] = []
+    if payload.items:
+        items = await _set_transaction_items(db, txn.id, ledger.id, payload.items)
+
     await db.commit()
     await db.refresh(txn)
-    return _to_public(txn, tags)
+    return _to_public(txn, tags, items)
 
 
 @router.get("/{transaction_id}", response_model=TransactionPublic)
@@ -183,7 +253,8 @@ async def get_transaction(
     if txn is None or txn.ledger_id != ledger.id:
         raise HTTPException(status_code=404, detail="Transaction not found")
     tag_map = await _tags_by_transaction(db, [txn.id])
-    return _to_public(txn, tag_map.get(txn.id, []))
+    item_map = await _items_by_transaction(db, [txn.id])
+    return _to_public(txn, tag_map.get(txn.id, []), item_map.get(txn.id, []))
 
 
 @router.patch("/{transaction_id}", response_model=TransactionPublic)
@@ -200,6 +271,8 @@ async def update_transaction(
 
     data = payload.model_dump(exclude_unset=True)
     tag_ids = data.pop("tag_ids", None)
+    items_data = data.pop("items", None)
+
     if "category_id" in data:
         await _validate_category(
             db, ledger.id, data["category_id"], data.get("type", txn.type)
@@ -214,13 +287,23 @@ async def update_transaction(
         tags = await _resolve_tags(db, ledger.id, tag_ids)
         await _set_transaction_tags(db, txn.id, [t.id for t in tags])
 
+    items: list[TransactionItem] | None = None
+    if items_data is not None:
+        items = await _set_transaction_items(
+            db, txn.id, ledger.id, [TransactionItemCreate.model_validate(it) for it in items_data]
+        )
+
     await db.commit()
     await db.refresh(txn)
 
     if tags is None:
         tag_map = await _tags_by_transaction(db, [txn.id])
         tags = tag_map.get(txn.id, [])
-    return _to_public(txn, tags)
+    if items is None:
+        item_map = await _items_by_transaction(db, [txn.id])
+        items = item_map.get(txn.id, [])
+
+    return _to_public(txn, tags, items)
 
 
 @router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -235,3 +318,4 @@ async def delete_transaction(
         raise HTTPException(status_code=404, detail="Transaction not found")
     await db.delete(txn)
     await db.commit()
+

@@ -6,6 +6,7 @@ from app.models.ledger import Ledger, LedgerMember, LedgerRole, LedgerType
 from app.models.recurring import RecurrenceFrequency, RecurringTransaction
 from app.models.tag import Tag, TransactionTag
 from app.models.transaction import Transaction
+from app.models.transaction_item import TransactionItem
 from app.models.user import User
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "RecurringTransaction",
     "Tag",
     "Transaction",
+    "TransactionItem",
     "TransactionTag",
     "TransactionType",
     "User",
