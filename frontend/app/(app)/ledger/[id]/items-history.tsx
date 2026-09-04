@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 
 import { api } from '@/lib/api';
-import type { ItemGroupSummary, ItemPriceHistoryEntry, ItemPriceHistoryResponse } from '@/lib/types';
+import type { ItemGroupSummary, ItemPriceHistoryResponse } from '@/lib/types';
 
 export default function ItemsHistoryScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -122,7 +122,7 @@ export default function ItemsHistoryScreen() {
       ) : history.length === 0 ? (
         <View style={styles.centerContainer}>
           <Text style={styles.emptyIcon}>📦</Text>
-          <Text style={styles.emptyTitle}>'{activeQuery}' 구매 기록이 없습니다</Text>
+          <Text style={styles.emptyTitle}>&apos;{activeQuery}&apos; 구매 기록이 없습니다</Text>
           <Text style={styles.emptySubtitle}>거래 등록 시 세부 품목을 추가하면 이곳에서 가격을 추적할 수 있습니다.</Text>
         </View>
       ) : (
@@ -134,7 +134,7 @@ export default function ItemsHistoryScreen() {
             stats && (
               <View style={styles.statsCard}>
                 <View style={styles.statsHeader}>
-                  <Text style={styles.statsTitle}>📊 '{stats.query}' 가격 분석</Text>
+                  <Text style={styles.statsTitle}>📊 &apos;{stats.query}&apos; 가격 분석</Text>
                   <Text style={styles.statsCount}>총 {stats.count}건 구매 기록</Text>
                 </View>
 

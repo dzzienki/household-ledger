@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, Style
 import { notify } from '@/lib/dialog';
 
 import { AmountInput } from '@/components/amount-input';
-import { ApiError, api, apiUpload, getErrorMessage } from '@/lib/api';
+import { api, apiUpload, getErrorMessage } from '@/lib/api';
 import { CURRENCIES } from '@/lib/currencies';
 import type { CategorySuggestion, Category, Ledger, ReceiptExtraction, Tag, Transaction, TransactionItem, TransactionType } from '@/lib/types';
 
@@ -439,7 +439,7 @@ export function TransactionForm({
 
       {/* 세부 품목 (Line Items) 섹션 */}
       <View style={styles.itemsSectionHeader}>
-        <View>
+        <View style={styles.itemsSectionTitleContainer}>
           <Text style={styles.itemsSectionTitle}>🛒 세부 품목 ({items.length}개)</Text>
           <Text style={styles.itemsSectionSubtitle}>영수증 내 개별 상품 및 가격을 관리합니다</Text>
         </View>
@@ -461,22 +461,34 @@ export function TransactionForm({
 
           {items.map((item, index) => (
             <View key={index} style={styles.itemCard}>
+              <View style={styles.itemCardHeader}>
+                <Text style={styles.itemIndexBadge}>품목 #{index + 1}</Text>
+                <Pressable
+                  style={styles.removeItemBtn}
+                  onPress={() => removeItem(index)}
+                  hitSlop={8}
+                  accessibilityLabel={`품목 ${index + 1} 삭제`}
+                >
+                  <Text style={styles.removeItemBtnText}>✕ 삭제</Text>
+                </Pressable>
+              </View>
+
               <View style={styles.itemRow}>
                 <TextInput
-                  style={[styles.itemInput, { flex: 2 }]}
+                  style={[styles.itemInput, { flex: 1 }]}
                   placeholder="품목명 (예: 신라면 5입)"
                   value={item.name}
                   onChangeText={(val) => updateItem(index, { name: val })}
                 />
+              </View>
+
+              <View style={styles.itemRow}>
                 <TextInput
-                  style={[styles.itemInput, { flex: 1.2 }]}
-                  placeholder="그룹 (예: 라면)"
+                  style={[styles.itemInput, { flex: 1 }]}
+                  placeholder="그룹 (선택, 예: 라면, 음료)"
                   value={item.item_group || ''}
                   onChangeText={(val) => updateItem(index, { item_group: val || null })}
                 />
-                <Pressable style={styles.removeItemBtn} onPress={() => removeItem(index)}>
-                  <Text style={styles.removeItemBtnText}>✕</Text>
-                </Pressable>
               </View>
 
               <View style={styles.itemRow}>
@@ -520,7 +532,7 @@ export function TransactionForm({
                   <Text style={styles.itemFieldLabel}>금액</Text>
                   <TextInput
                     style={styles.itemInputSmall}
-                    placeholder="총 금액"
+                    placeholder="금액"
                     keyboardType="numeric"
                     value={item.total_price ? String(item.total_price) : ''}
                     onChangeText={(val) => {
@@ -612,6 +624,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: 24,
     marginBottom: 10,
+    gap: 8,
+  },
+  itemsSectionTitleContainer: {
+    flex: 1,
   },
   itemsSectionTitle: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
   itemsSectionSubtitle: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
@@ -622,6 +638,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#C7D2FE',
+    flexShrink: 0,
   },
   addItemBtnText: { fontSize: 13, fontWeight: '700', color: '#4F46E5' },
   itemsContainer: { gap: 10, marginBottom: 8 },
@@ -633,20 +650,59 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
+    flexWrap: 'wrap',
+    gap: 8,
   },
-  itemsSumText: { fontSize: 13, fontWeight: '700', color: '#374151' },
-  syncBtn: { backgroundColor: '#3B82F6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  itemsSumText: { fontSize: 13, fontWeight: '700', color: '#374151', flexShrink: 1 },
+  syncBtn: { backgroundColor: '#3B82F6', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, flexShrink: 0 },
   syncBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   itemCard: {
     backgroundColor: '#F9FAFB',
     borderRadius: 8,
-    padding: 10,
+    padding: 12,
     borderWidth: 1,
     borderColor: '#E5E7EB',
     gap: 8,
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'hidden',
   },
-  itemRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
-  itemCol: { gap: 2 },
+  itemCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  itemIndexBadge: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  removeItemBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 6,
+    flexShrink: 0,
+  },
+  removeItemBtnText: {
+    color: '#DC2626',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  itemRow: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: '100%',
+  },
+  itemCol: {
+    gap: 2,
+    minWidth: 0,
+  },
   itemFieldLabel: { fontSize: 11, color: '#6B7280', fontWeight: '600' },
   itemInput: {
     borderWidth: 1,
@@ -656,6 +712,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     fontSize: 14,
     backgroundColor: '#fff',
+    minWidth: 0,
+    maxWidth: '100%',
   },
   itemInputSmall: {
     borderWidth: 1,
@@ -665,16 +723,10 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     fontSize: 13,
     backgroundColor: '#fff',
+    minWidth: 0,
+    width: '100%',
+    maxWidth: '100%',
   },
-  removeItemBtn: {
-    width: 32,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FEE2E2',
-    borderRadius: 6,
-  },
-  removeItemBtnText: { color: '#DC2626', fontWeight: '700', fontSize: 14 },
 
   submit: { marginTop: 28, backgroundColor: '#3B82F6', paddingVertical: 14, borderRadius: 8, alignItems: 'center' },
   submitDisabled: { opacity: 0.6 },
