@@ -36,6 +36,22 @@ command -v npm >/dev/null || fail "npm 미설치"
 grep -q "\"baseUrl\": \"${CONTEXT_ROOT}\"" "$FRONTEND_DIR/app.json" \
   || fail "app.json 의 experiments.baseUrl 이 ${CONTEXT_ROOT} 가 아님 — 정적 자산 경로 깨짐"
 
+# --- Git 상태 확인 ---
+if command -v git >/dev/null 2>&1 && [ -d "$PROJECT_ROOT/.git" ]; then
+  CURRENT_COMMIT=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  COMMIT_MSG=$(git -C "$PROJECT_ROOT" log -1 --pretty=%s 2>/dev/null || echo "")
+  info "배포 대상 커밋: [$CURRENT_COMMIT] $COMMIT_MSG"
+
+  if git -C "$PROJECT_ROOT" fetch origin main --quiet 2>/dev/null; then
+    LOCAL_HASH=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+    REMOTE_HASH=$(git -C "$PROJECT_ROOT" rev-parse origin/main 2>/dev/null || echo "")
+    if [ -n "$LOCAL_HASH" ] && [ -n "$REMOTE_HASH" ] && [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
+      echo -e "${YELLOW}[WARN] origin/main 에 아직 pull 받지 않은 새 커밋이 있습니다!${NC}"
+      echo -e "${YELLOW}[WARN] 최신 변경사항을 반영하려면 'git pull origin main' 후 다시 실행하세요.${NC}"
+    fi
+  fi
+fi
+
 # --- 의존성 설치 + 빌드 ---
 info "npm ci..."
 cd "$FRONTEND_DIR"

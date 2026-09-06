@@ -48,6 +48,8 @@ Rocky Linux 기준. **이미 `mome`/`myapp` 등이 돌고 있는 기존 nginx �
   location /household-ledger/ {
       alias /var/www/household-ledger/;
       try_files $uri $uri/ /household-ledger/index.html;
+      # SPA 새 배포 시 브라우저가 이전 index.html을 캐싱하지 않도록 no-cache 헤더 설정 (배포 즉시 반영)
+      add_header Cache-Control "no-cache";
   }
 ```
 
