@@ -142,7 +142,7 @@ export default function ItemsHistoryScreen() {
                   <View style={styles.statsBox}>
                     <Text style={styles.statsLabel}>최근 구매가</Text>
                     <Text style={[styles.statsValue, { color: '#2563EB' }]}>
-                      {stats.latest_unit_price !== null ? `${stats.latest_unit_price.toLocaleString()}원` : '-'}
+                      {stats.latest_unit_price !== null ? `${Math.round(Number(stats.latest_unit_price)).toLocaleString()}원` : '-'}
                     </Text>
                     <Text style={styles.statsSub}>{stats.latest_date ? `${stats.latest_date} (${stats.latest_payee || '거래처 미입력'})` : ''}</Text>
                   </View>
@@ -150,7 +150,7 @@ export default function ItemsHistoryScreen() {
                   <View style={styles.statsBox}>
                     <Text style={styles.statsLabel}>평균 구매가</Text>
                     <Text style={styles.statsValue}>
-                      {stats.avg_unit_price !== null ? `${stats.avg_unit_price.toLocaleString()}원` : '-'}
+                      {stats.avg_unit_price !== null ? `${Math.round(Number(stats.avg_unit_price)).toLocaleString()}원` : '-'}
                     </Text>
                     <Text style={styles.statsSub}>전체 평균 단가</Text>
                   </View>
@@ -158,7 +158,7 @@ export default function ItemsHistoryScreen() {
                   <View style={styles.statsBox}>
                     <Text style={styles.statsLabel}>최저가</Text>
                     <Text style={[styles.statsValue, { color: '#059669' }]}>
-                      {stats.min_unit_price !== null ? `${stats.min_unit_price.toLocaleString()}원` : '-'}
+                      {stats.min_unit_price !== null ? `${Math.round(Number(stats.min_unit_price)).toLocaleString()}원` : '-'}
                     </Text>
                     <Text style={styles.statsSub}>가장 저렴했던 가격</Text>
                   </View>
@@ -166,7 +166,7 @@ export default function ItemsHistoryScreen() {
                   <View style={styles.statsBox}>
                     <Text style={styles.statsLabel}>최고가</Text>
                     <Text style={[styles.statsValue, { color: '#DC2626' }]}>
-                      {stats.max_unit_price !== null ? `${stats.max_unit_price.toLocaleString()}원` : '-'}
+                      {stats.max_unit_price !== null ? `${Math.round(Number(stats.max_unit_price)).toLocaleString()}원` : '-'}
                     </Text>
                     <Text style={styles.statsSub}>가장 비쌌던 가격</Text>
                   </View>
@@ -188,10 +188,10 @@ export default function ItemsHistoryScreen() {
                 </View>
                 <View style={styles.priceContainer}>
                   <Text style={styles.unitPriceText}>
-                    단가 {item.unit_price !== null ? `${item.unit_price.toLocaleString()}원` : '-'}
+                    단가 {item.unit_price !== null ? `${Math.round(Number(item.unit_price)).toLocaleString()}원` : '-'}
                   </Text>
                   <Text style={styles.totalPriceText}>
-                    총 {item.total_price.toLocaleString()} {item.currency} ({item.quantity}개)
+                    총 {Math.round(Number(item.total_price)).toLocaleString()} {item.currency} ({Number(item.quantity)}개)
                   </Text>
                 </View>
               </View>

@@ -2,7 +2,15 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
+
+
+def _serialize_num(v: Decimal | None) -> int | float | None:
+    if v is None:
+        return None
+    if v == v.to_integral():
+        return int(v)
+    return float(v)
 
 
 class TransactionItemCreate(BaseModel):
@@ -38,6 +46,10 @@ class TransactionItemPublic(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    @field_serializer("quantity", "unit_price", "total_price", when_used="json")
+    def serialize_decimals(self, v: Decimal | None) -> int | float | None:
+        return _serialize_num(v)
+
 
 class ItemPriceHistoryEntry(BaseModel):
     id: UUID
@@ -52,6 +64,10 @@ class ItemPriceHistoryEntry(BaseModel):
     currency: str
     memo: str | None
 
+    @field_serializer("quantity", "unit_price", "total_price", when_used="json")
+    def serialize_decimals(self, v: Decimal | None) -> int | float | None:
+        return _serialize_num(v)
+
 
 class ItemPriceStats(BaseModel):
     query: str
@@ -63,6 +79,10 @@ class ItemPriceStats(BaseModel):
     max_unit_price: Decimal | None
     avg_unit_price: Decimal | None
     currency: str
+
+    @field_serializer("latest_unit_price", "min_unit_price", "max_unit_price", "avg_unit_price", when_used="json")
+    def serialize_stats_decimals(self, v: Decimal | None) -> int | float | None:
+        return _serialize_num(v)
 
 
 class ItemPriceHistoryResponse(BaseModel):

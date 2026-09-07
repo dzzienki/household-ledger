@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 from app.models.category import TransactionType
 from app.schemas.tag import TagPublic
@@ -49,3 +49,9 @@ class TransactionPublic(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("amount", when_used="json")
+    def serialize_amount(self, v: Decimal) -> int | float:
+        if v == v.to_integral():
+            return int(v)
+        return float(v)

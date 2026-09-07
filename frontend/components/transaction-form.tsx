@@ -7,6 +7,7 @@ import { notify } from '@/lib/dialog';
 import { AmountInput } from '@/components/amount-input';
 import { api, apiUpload, getErrorMessage } from '@/lib/api';
 import { CURRENCIES } from '@/lib/currencies';
+import { isZeroDecimalCurrency } from '@/lib/format';
 import type { CategorySuggestion, Category, Ledger, ReceiptExtraction, Tag, Transaction, TransactionItem, TransactionType } from '@/lib/types';
 
 export interface TransactionFormValue {
@@ -48,14 +49,23 @@ export function TransactionForm({
   deleting,
 }: Props) {
   const [type, setType] = useState<TransactionType>(initial?.type ?? 'expense');
-  const [amount, setAmount] = useState(initial ? String(Number(initial.amount)) : '');
+  const [amount, setAmount] = useState(
+    initial ? String(Math.round(Number(initial.amount) || 0)) : '',
+  );
   const [currency, setCurrency] = useState(initial?.currency ?? 'KRW');
   const [currencyTouched, setCurrencyTouched] = useState(!!initial);
   const [payee, setPayee] = useState(initial?.payee ?? '');
   const [memo, setMemo] = useState(initial?.memo ?? '');
   const [categoryId, setCategoryId] = useState<string | null>(initial?.category_id ?? null);
   const [tagIds, setTagIds] = useState<string[]>(initial?.tags?.map((t) => t.id) ?? []);
-  const [items, setItems] = useState<TransactionItem[]>(initial?.items ?? []);
+  const [items, setItems] = useState<TransactionItem[]>(
+    (initial?.items ?? []).map((it) => ({
+      ...it,
+      quantity: Number(it.quantity) || 1,
+      unit_price: it.unit_price != null ? Math.round(Number(it.unit_price)) : null,
+      total_price: Math.round(Number(it.total_price) || 0),
+    })),
+  );
   const [transactionDate, setTransactionDate] = useState(
     initial?.transaction_date ?? new Date().toISOString().slice(0, 10),
   );
@@ -130,7 +140,9 @@ export function TransactionForm({
   }
 
   function syncAmountFromItems() {
-    const total = items.reduce((sum, it) => sum + (Number(it.total_price) || 0), 0);
+    const isZeroDec = isZeroDecimalCurrency(currency);
+    const rawTotal = items.reduce((sum, it) => sum + (Number(it.total_price) || 0), 0);
+    const total = isZeroDec ? Math.round(rawTotal) : rawTotal;
     if (total > 0) {
       setAmount(String(total));
       notify('금액 동기화', `세부 품목 합계(${total.toLocaleString()}원)로 금액이 설정되었습니다.`);
@@ -176,20 +188,28 @@ export function TransactionForm({
     },
     onSuccess: ({ extraction, suggested_category_id }) => {
       setType('expense');
-      const itemsSum = (extraction.items || []).reduce((s, it) => s + (Number(it.total_price) || 0), 0);
+      const isZeroDec = isZeroDecimalCurrency(currency);
+      const sanitizedItems = (extraction.items || []).map((it) => ({
+        ...it,
+        quantity: Number(it.quantity) || 1,
+        unit_price: it.unit_price != null ? (isZeroDec ? Math.round(Number(it.unit_price)) : Number(it.unit_price)) : null,
+        total_price: isZeroDec ? Math.round(Number(it.total_price) || 0) : Number(it.total_price) || 0,
+      }));
+      const itemsSum = sanitizedItems.reduce((s, it) => s + (Number(it.total_price) || 0), 0);
       if (extraction.amount) {
-        setAmount(String(extraction.amount));
+        const amt = Number(extraction.amount);
+        setAmount(String(isZeroDec ? Math.round(amt) : amt));
       } else if (itemsSum > 0) {
-        setAmount(String(itemsSum));
+        setAmount(String(isZeroDec ? Math.round(itemsSum) : itemsSum));
       }
       if (extraction.transaction_date) setTransactionDate(extraction.transaction_date);
       if (extraction.payee) setPayee(extraction.payee);
       if (extraction.memo) setMemo(extraction.memo);
       if (suggested_category_id) setCategoryId(suggested_category_id);
-      if (extraction.items && extraction.items.length > 0) {
-        setItems(extraction.items);
+      if (sanitizedItems.length > 0) {
+        setItems(sanitizedItems);
       }
-      const itemCountText = extraction.items?.length ? ` (세부 품목 ${extraction.items.length}개 추출)` : '';
+      const itemCountText = sanitizedItems.length ? ` (세부 품목 ${sanitizedItems.length}개 추출)` : '';
       setAiTip(`영수증 분석 완료${itemCountText} (신뢰도 ${(extraction.confidence * 100).toFixed(0)}%)`);
     },
     onError: (err) => {
@@ -259,21 +279,28 @@ export function TransactionForm({
       return;
     }
 
+    const isZeroDec = isZeroDecimalCurrency(currency);
+    const finalAmount = isZeroDec ? Math.round(num) : num;
+
     const validItems = items
       .filter((it) => it.name.trim() && Number(it.total_price) > 0)
-      .map((it) => ({
-        ...it,
-        name: it.name.trim(),
-        item_group: it.item_group?.trim() || null,
-        quantity: Number(it.quantity) || 1,
-        unit_price: it.unit_price ? Number(it.unit_price) : null,
-        total_price: Number(it.total_price),
-        memo: it.memo?.trim() || null,
-      }));
+      .map((it) => {
+        const up = it.unit_price != null ? (isZeroDec ? Math.round(Number(it.unit_price)) : Number(it.unit_price)) : null;
+        const tp = isZeroDec ? Math.round(Number(it.total_price)) : Number(it.total_price);
+        return {
+          ...it,
+          name: it.name.trim(),
+          item_group: it.item_group?.trim() || null,
+          quantity: Number(it.quantity) || 1,
+          unit_price: up,
+          total_price: tp,
+          memo: it.memo?.trim() || null,
+        };
+      });
 
     onSubmit({
       type,
-      amount: num,
+      amount: finalAmount,
       currency,
       transaction_date: transactionDate,
       category_id: categoryId,
@@ -321,6 +348,7 @@ export function TransactionForm({
         style={styles.input}
         placeholder="0"
         value={amount}
+        currency={currency}
         onChangeText={setAmount}
       />
 
@@ -452,7 +480,7 @@ export function TransactionForm({
         <View style={styles.itemsContainer}>
           <View style={styles.itemsSummaryBar}>
             <Text style={styles.itemsSumText}>
-              품목 합계: {items.reduce((s, it) => s + (Number(it.total_price) || 0), 0).toLocaleString()} {currency}
+              품목 합계: {Math.round(items.reduce((s, it) => s + (Number(it.total_price) || 0), 0)).toLocaleString()} {currency}
             </Text>
             <Pressable style={styles.syncBtn} onPress={syncAmountFromItems}>
               <Text style={styles.syncBtnText}>총금액에 반영</Text>
@@ -492,18 +520,18 @@ export function TransactionForm({
               </View>
 
               <View style={styles.itemRow}>
-                <View style={[styles.itemCol, { flex: 1 }]}>
+                <View style={[styles.itemCol, { flex: 0.9 }]}>
                   <Text style={styles.itemFieldLabel}>수량</Text>
                   <TextInput
                     style={styles.itemInputSmall}
                     placeholder="1"
-                    keyboardType="numeric"
-                    value={item.quantity !== undefined ? String(item.quantity) : '1'}
+                    keyboardType="number-pad"
+                    value={item.quantity !== undefined ? String(Number(item.quantity) || 1) : '1'}
                     onChangeText={(val) => {
-                      const q = Number(val) || 1;
+                      const q = Number(val.replace(/[^\d]/g, '')) || 1;
                       const patch: Partial<TransactionItem> = { quantity: q };
-                      if (item.unit_price) {
-                        patch.total_price = Math.round(q * item.unit_price);
+                      if (item.unit_price != null) {
+                        patch.total_price = Math.round(q * Number(item.unit_price));
                       }
                       updateItem(index, patch);
                     }}
@@ -512,16 +540,16 @@ export function TransactionForm({
 
                 <View style={[styles.itemCol, { flex: 1.3 }]}>
                   <Text style={styles.itemFieldLabel}>단가</Text>
-                  <TextInput
+                  <AmountInput
                     style={styles.itemInputSmall}
                     placeholder="단가"
-                    keyboardType="numeric"
-                    value={item.unit_price ? String(item.unit_price) : ''}
+                    value={item.unit_price != null ? String(item.unit_price) : ''}
+                    currency={currency}
                     onChangeText={(val) => {
                       const up = val ? Number(val) : null;
                       const patch: Partial<TransactionItem> = { unit_price: up };
-                      if (up && item.quantity) {
-                        patch.total_price = Math.round(item.quantity * up);
+                      if (up !== null && item.quantity) {
+                        patch.total_price = Math.round(Number(item.quantity) * up);
                       }
                       updateItem(index, patch);
                     }}
@@ -530,16 +558,17 @@ export function TransactionForm({
 
                 <View style={[styles.itemCol, { flex: 1.5 }]}>
                   <Text style={styles.itemFieldLabel}>금액</Text>
-                  <TextInput
+                  <AmountInput
                     style={styles.itemInputSmall}
                     placeholder="금액"
-                    keyboardType="numeric"
                     value={item.total_price ? String(item.total_price) : ''}
+                    currency={currency}
                     onChangeText={(val) => {
                       const tp = Number(val) || 0;
                       const patch: Partial<TransactionItem> = { total_price: tp };
-                      if (item.quantity && item.quantity > 0) {
-                        patch.unit_price = Math.round(tp / item.quantity);
+                      const q = Number(item.quantity) || 1;
+                      if (q > 0) {
+                        patch.unit_price = Math.round(tp / q);
                       }
                       updateItem(index, patch);
                     }}
