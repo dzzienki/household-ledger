@@ -57,9 +57,9 @@ info "npm ci..."
 cd "$FRONTEND_DIR"
 npm ci --silent
 
-info "Expo web export (EXPO_PUBLIC_API_URL=${API_BASE})..."
-rm -rf "$DIST_DIR"
-EXPO_PUBLIC_API_URL="$API_BASE" npx expo export --platform web
+info "Expo web export (EXPO_PUBLIC_API_URL=${API_BASE}, 캐시 초기화)..."
+rm -rf "$DIST_DIR" "$FRONTEND_DIR/.expo"
+EXPO_PUBLIC_API_URL="$API_BASE" npx expo export --platform web --clear
 
 [ -f "$DIST_DIR/index.html" ] || fail "dist/index.html 생성 실패"
 

@@ -543,7 +543,7 @@ export function TransactionForm({
                   <AmountInput
                     style={styles.itemInputSmall}
                     placeholder="단가"
-                    value={item.unit_price != null ? String(item.unit_price) : ''}
+                    value={item.unit_price != null ? item.unit_price : ''}
                     currency={currency}
                     onChangeText={(val) => {
                       const up = val ? Number(val) : null;
@@ -561,10 +561,10 @@ export function TransactionForm({
                   <AmountInput
                     style={styles.itemInputSmall}
                     placeholder="금액"
-                    value={item.total_price ? String(item.total_price) : ''}
+                    value={item.total_price ? item.total_price : ''}
                     currency={currency}
                     onChangeText={(val) => {
-                      const tp = Number(val) || 0;
+                      const tp = val ? Number(val) : 0;
                       const patch: Partial<TransactionItem> = { total_price: tp };
                       const q = Number(item.quantity) || 1;
                       if (q > 0) {
