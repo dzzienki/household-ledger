@@ -43,6 +43,22 @@ command -v uv >/dev/null || fail "uv 미설치 (curl -LsSf https://astral.sh/uv/
 systemctl cat "${SERVICE_NAME}.service" >/dev/null 2>&1 \
   || fail "systemd 서비스 미등록: $SERVICE_NAME (먼저 ./scripts/initial-setup.sh)"
 
+# --- Git 상태 확인 ---
+if command -v git >/dev/null 2>&1 && [ -d "$PROJECT_ROOT/.git" ]; then
+  CURRENT_COMMIT=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  COMMIT_MSG=$(git -C "$PROJECT_ROOT" log -1 --pretty=%s 2>/dev/null || echo "")
+  info "배포 대상 커밋: [$CURRENT_COMMIT] $COMMIT_MSG"
+
+  if git -C "$PROJECT_ROOT" fetch origin main --quiet 2>/dev/null; then
+    LOCAL_HASH=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+    REMOTE_HASH=$(git -C "$PROJECT_ROOT" rev-parse origin/main 2>/dev/null || echo "")
+    if [ -n "$LOCAL_HASH" ] && [ -n "$REMOTE_HASH" ] && [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
+      echo -e "${YELLOW}[WARN] origin/main 에 아직 pull 받지 않은 새 커밋이 있습니다!${NC}"
+      echo -e "${YELLOW}[WARN] 최신 변경사항을 반영하려면 'git pull origin main' 후 다시 실행하세요.${NC}"
+    fi
+  fi
+fi
+
 # --- 소스 → 운영 위치 동기화 (venv/캐시/시크릿 제외) ---
 info "소스 → $RUN_BACKEND 동기화..."
 rsync -a --delete \

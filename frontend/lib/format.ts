@@ -52,14 +52,17 @@ export function formatAmountInput(raw: string | number | null | undefined, allow
   if (!str) return '';
 
   if (!allowDecimals) {
-    const intRaw = str.split('.')[0];
-    const intStripped = intRaw.replace(/^0+(?=\d)/, '') || (intRaw === '0' ? '0' : '');
-    return intStripped ? intStripped.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : '';
+    const intDigits = str.split('.')[0].replace(/[^\d]/g, '');
+    if (!intDigits) return '';
+    const intStripped = intDigits.replace(/^0+(?=\d)/, '');
+    return intStripped.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   }
 
   const hasDot = str.includes('.');
-  const [intRaw, ...decParts] = str.split('.');
-  const intStripped = intRaw.replace(/^0+(?=\d)/, '') || '0';
+  const [intPart, ...decParts] = str.split('.');
+  const intDigits = intPart.replace(/[^\d]/g, '');
+  const intStripped = intDigits.replace(/^0+(?=\d)/, '') || (intDigits === '0' ? '0' : '');
   const intFormatted = intStripped.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return hasDot ? `${intFormatted}.${decParts.join('')}` : intFormatted;
+  const decClean = decParts.join('').replace(/[^\d]/g, '');
+  return hasDot ? `${intFormatted}.${decClean}` : intFormatted;
 }
