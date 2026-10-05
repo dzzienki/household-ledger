@@ -10,3 +10,8 @@ class User(UUIDPKMixin, TimestampMixin, SQLModel, table=True):
     name: str = Field(max_length=100)
     hashed_password: str = Field(max_length=255)
     is_active: bool = Field(default=True)
+
+    # Push reminder preferences. Reminders go out at notify_hour (KST) on the day
+    # that is notify_days_before days ahead of a due date.
+    notify_days_before: int = Field(default=1)
+    notify_hour: int = Field(default=9)

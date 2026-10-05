@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { confirmAsync, notify } from '@/lib/dialog';
@@ -23,17 +23,10 @@ const FREQ_LABEL: Record<RecurrenceFrequency, string> = {
   yearly: '매년',
 };
 
-type ChecklistField = 'checked_funded' | 'checked_paid' | 'checked_amount';
-
-const CHECKLIST: { key: ChecklistField; label: string }[] = [
-  { key: 'checked_funded', label: '이체' },
-  { key: 'checked_paid', label: '납부' },
-  { key: 'checked_amount', label: '금액' },
-];
-
 export default function RecurringScreen() {
   const { id: ledgerId } = useLocalSearchParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   const rulesQuery = useQuery({
     queryKey: ['recurring', ledgerId],
@@ -58,18 +51,6 @@ export default function RecurringScreen() {
     },
   });
 
-  const checklistMutation = useMutation({
-    mutationFn: ({ id, field, value }: { id: string; field: ChecklistField; value: boolean }) =>
-      api(`/api/ledgers/${ledgerId}/recurring/${id}/checklist`, {
-        method: 'PATCH',
-        body: { [field]: value },
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] }),
-    onError: (err) => {
-      notify('오류', getErrorMessage(err, '변경 실패'));
-    },
-  });
-
   const categoriesById = new Map((categoriesQuery.data ?? []).map((c) => [c.id, c]));
 
   if (rulesQuery.isLoading) {
@@ -91,10 +72,11 @@ export default function RecurringScreen() {
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         ListHeaderComponent={
           (rulesQuery.data ?? []).length > 0 ? (
-            <Text style={styles.legend}>
-              자동이체 체크리스트 — 이체(통장에 입금) · 납부(출금 완료) · 금액(고지서 대조). 매 회차마다
-              자동으로 초기화됩니다.
-            </Text>
+            <Pressable onPress={() => router.push(`/(app)/ledger/${ledgerId}/checklist`)}>
+              <Text style={styles.legend}>
+                📋 이체·납부·금액 체크는 <Text style={styles.legendLink}>월별 체크리스트</Text>에서 합니다 →
+              </Text>
+            </Pressable>
           ) : null
         }
         renderItem={({ item }) => {
@@ -129,23 +111,6 @@ export default function RecurringScreen() {
                   ) : null}
                   {item.memo ? <Text style={styles.rowMemo}>{item.memo}</Text> : null}
                 </Pressable>
-                <View style={styles.checkRow}>
-                  {CHECKLIST.map((c) => {
-                    const on = item[c.key];
-                    return (
-                      <Pressable
-                        key={c.key}
-                        style={[styles.checkChip, on && styles.checkChipOn]}
-                        onPress={() => checklistMutation.mutate({ id: item.id, field: c.key, value: !on })}
-                        hitSlop={4}
-                      >
-                        <Text style={[styles.checkText, on && styles.checkTextOn]}>
-                          {on ? '✓' : '○'} {c.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
               </View>
               <Pressable
                 onPress={async () => {
@@ -487,19 +452,8 @@ const styles = StyleSheet.create({
   rowPayee: { fontSize: 12, color: '#4B5563', marginTop: 3, marginLeft: 18 },
   rowFieldLabel: { color: '#9CA3AF', fontWeight: '700' },
   rowMemo: { fontSize: 11, color: '#9CA3AF', marginTop: 2, marginLeft: 18 },
-  checkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10, marginLeft: 18 },
-  checkChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    backgroundColor: '#fff',
-  },
-  checkChipOn: { backgroundColor: '#DCFCE7', borderColor: '#16A34A' },
-  checkText: { fontSize: 12, fontWeight: '600', color: '#6B7280' },
-  checkTextOn: { color: '#15803D' },
   legend: { fontSize: 12, color: '#6B7280', lineHeight: 18, marginBottom: 12 },
+  legendLink: { color: '#3B82F6', fontWeight: '700' },
   deleteIcon: { fontSize: 18, paddingHorizontal: 4 },
   empty: { color: '#9CA3AF', textAlign: 'center', marginTop: 40 },
   fab: {

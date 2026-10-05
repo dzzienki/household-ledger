@@ -1,3 +1,6 @@
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,12 +9,14 @@ from app.api import (
     auth,
     budgets,
     categories,
+    checklist,
     csv_io,
     exchange_rates,
     health,
     invitations,
     items,
     ledgers,
+    push,
     recurring,
     statements,
     stats,
@@ -20,6 +25,15 @@ from app.api import (
     users,
 )
 from app.core.config import settings
+from app.services.reminders import reminder_loop
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    task = asyncio.create_task(reminder_loop()) if settings.REMINDERS_ENABLED else None
+    yield
+    if task:
+        task.cancel()
 
 
 def create_app() -> FastAPI:
@@ -27,6 +41,7 @@ def create_app() -> FastAPI:
         title="Household Ledger API",
         version="0.1.0",
         debug=settings.APP_DEBUG,
+        lifespan=lifespan,
     )
 
     if settings.cors_origins_list:
@@ -51,6 +66,8 @@ def create_app() -> FastAPI:
     app.include_router(items.router, prefix=api_prefix)
     app.include_router(stats.router, prefix=api_prefix)
     app.include_router(recurring.router, prefix=api_prefix)
+    app.include_router(checklist.router, prefix=api_prefix)
+    app.include_router(push.router, prefix=api_prefix)
     app.include_router(budgets.router, prefix=api_prefix)
     app.include_router(csv_io.router, prefix=api_prefix)
     app.include_router(statements.router, prefix=api_prefix)

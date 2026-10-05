@@ -10,11 +10,12 @@ import {
   type TransactionFilterState,
 } from '@/components/transaction-filter';
 import { api } from '@/lib/api';
+import { currentPeriod } from '@/lib/checklist';
 import { convertToBase, ratesToMap } from '@/lib/currencies';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/hooks';
 import { storage } from '@/lib/storage';
-import type { Category, ExchangeRate, Ledger, LedgerSummary, Tag, Transaction } from '@/lib/types';
+import type { Category, ChecklistMonth, ExchangeRate, Ledger, LedgerSummary, Tag, Transaction } from '@/lib/types';
 
 type SummaryMode = 'balance' | 'expense' | 'simple';
 
@@ -93,6 +94,13 @@ export default function LedgerDetailScreen() {
   const ratesQuery = useQuery({
     queryKey: ['exchange-rates', id],
     queryFn: () => api<ExchangeRate[]>(`/api/ledgers/${id}/exchange-rates`),
+    enabled: !!id,
+  });
+
+  // Always this calendar month, independent of the month being browsed below.
+  const checklistQuery = useQuery({
+    queryKey: ['checklist', id, currentPeriod()],
+    queryFn: () => api<ChecklistMonth>(`/api/ledgers/${id}/checklist?period=${currentPeriod()}`),
     enabled: !!id,
   });
 
@@ -491,6 +499,10 @@ export default function LedgerDetailScreen() {
         </Pressable>
       </View>
 
+      {checklistQuery.data && checklistQuery.data.total > 0 && (
+        <ChecklistBanner month={checklistQuery.data} onPress={() => router.push(`/(app)/ledger/${id}/checklist`)} />
+      )}
+
       <View style={styles.quickRow}>
         <QuickButton label="📄 명세서 가져오기" onPress={() => router.push(`/(app)/ledger/${id}/statement-import`)} />
         <QuickButton label="🛒 품목 가격 검색" onPress={() => router.push(`/(app)/ledger/${id}/items-history`)} />
@@ -498,6 +510,7 @@ export default function LedgerDetailScreen() {
       </View>
       <View style={styles.quickRow}>
         <QuickButton label="예산·카테고리" onPress={() => router.push(`/(app)/ledger/${id}/budgets`)} />
+        <QuickButton label="📋 체크리스트" onPress={() => router.push(`/(app)/ledger/${id}/checklist`)} />
         <QuickButton label="반복 거래" onPress={() => router.push(`/(app)/ledger/${id}/recurring`)} />
         <QuickButton label="태그" onPress={() => router.push(`/(app)/ledger/${id}/tags`)} />
         <QuickButton label="데이터" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
@@ -592,6 +605,21 @@ export default function LedgerDetailScreen() {
   );
 }
 
+function ChecklistBanner({ month, onPress }: { month: ChecklistMonth; onPress: () => void }) {
+  const remaining = month.total - month.completed;
+  const allDone = remaining === 0;
+  return (
+    <Pressable style={[styles.checklistBanner, allDone && styles.checklistBannerDone]} onPress={onPress}>
+      <Text style={[styles.checklistBannerTitle, allDone && { color: '#15803D' }]}>
+        {allDone ? '🎉 이번 달 체크리스트 모두 완료' : `📋 이번 달 아직 안 끝난 항목 ${remaining}건`}
+      </Text>
+      <Text style={styles.checklistBannerSub}>
+        {month.completed}/{month.total} 완료{!allDone && month.pending > 0 ? ` · 시작 전 ${month.pending}건` : ''} ›
+      </Text>
+    </Pressable>
+  );
+}
+
 function QuickButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <Pressable style={styles.quickButton} onPress={onPress}>
@@ -602,6 +630,22 @@ function QuickButton({ label, onPress }: { label: string; onPress: () => void })
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
+  checklistBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 16,
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
+  },
+  checklistBannerDone: { borderColor: '#BBF7D0', backgroundColor: '#F0FDF4' },
+  checklistBannerTitle: { fontSize: 13, fontWeight: '700', color: '#B45309', flexShrink: 1 },
+  checklistBannerSub: { fontSize: 12, color: '#6B7280', marginLeft: 8 },
   center: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   errorText: { color: '#DC2626' },
   headerLink: { color: '#3B82F6', fontWeight: '600', marginRight: 12 },

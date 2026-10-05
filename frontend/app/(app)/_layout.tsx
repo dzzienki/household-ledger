@@ -32,6 +32,7 @@ export default function AppLayout() {
       <Stack.Screen name="ledger/[id]/members" options={{ title: '멤버' }} />
       <Stack.Screen name="ledger/[id]/stats" options={{ title: '통계' }} />
       <Stack.Screen name="ledger/[id]/recurring" options={{ title: '반복 거래' }} />
+      <Stack.Screen name="ledger/[id]/checklist" options={{ title: '체크리스트' }} />
       <Stack.Screen name="ledger/[id]/budgets" options={{ title: '예산' }} />
       <Stack.Screen name="ledger/[id]/data" options={{ title: '가져오기/내보내기' }} />
     </Stack>

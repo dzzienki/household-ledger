@@ -26,6 +26,14 @@ class Settings(BaseSettings):
 
     UPLOAD_DIR: str = "uploads"
 
+    # Web Push. VAPID keys are generated on first use and stored in app_settings.
+    # Apple's push service rejects bogus subjects, so set a real mailto: in prod.
+    VAPID_SUBJECT: str = "mailto:admin@example.com"
+    # Where the web app is served; used to build notification click URLs.
+    FRONTEND_BASE_PATH: str = "/household-ledger"
+    REMINDERS_ENABLED: bool = True
+    REMINDER_INTERVAL_SECONDS: int = 300
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

@@ -3,7 +3,7 @@ from decimal import Decimal
 from enum import Enum
 from uuid import UUID
 
-from sqlalchemy import Column, Numeric
+from sqlalchemy import Boolean, Column, ForeignKey, Numeric, String, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.models.base import TimestampMixin, UUIDPKMixin
@@ -39,9 +39,26 @@ class RecurringTransaction(UUIDPKMixin, TimestampMixin, SQLModel, table=True):
     next_due_date: date = Field(index=True)
     active: bool = Field(default=True)
 
-    # Per-cycle autopay checklist. Reset automatically each cycle by comparing
-    # checklist_period to the current period key (see api/recurring.py).
-    checked_funded: bool = Field(default=False)  # 이체: 자동이체 통장에 입금
-    checked_paid: bool = Field(default=False)  # 납부: 실제 출금 완료
-    checked_amount: bool = Field(default=False)  # 금액: 고지서 대조
-    checklist_period: str | None = Field(default=None, max_length=10)
+
+class RecurringCheck(UUIDPKMixin, TimestampMixin, SQLModel, table=True):
+    """Monthly checklist state for one recurring rule.
+
+    One row per (rule, period) where period is a 'YYYY-MM' key, so past months
+    stay viewable. Rows are created lazily the first time a box is ticked; a
+    missing row means nothing has been checked yet for that month."""
+
+    __tablename__ = "recurring_checks"
+    __table_args__ = (UniqueConstraint("recurring_id", "period", name="uq_recurring_checks_rule_period"),)
+
+    recurring_id: UUID = Field(
+        sa_column=Column(
+            ForeignKey("recurring_transactions.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    period: str = Field(sa_column=Column(String(7), nullable=False))
+
+    checked_funded: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))  # 이체: 자동이체 통장에 입금
+    checked_paid: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))  # 납부: 실제 출금 완료
+    checked_amount: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))  # 금액: 고지서 대조

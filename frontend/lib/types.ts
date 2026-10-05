@@ -104,10 +104,39 @@ export interface RecurringTransaction {
   end_date: string | null;
   next_due_date: string;
   active: boolean;
+  created_at: string;
+}
+
+export interface ChecklistItem {
+  recurring_id: string;
+  category_id: string | null;
+  type: TransactionType;
+  title: string | null;
+  payee: string | null;
+  memo: string | null;
+  amount: string;
+  currency: string;
+  frequency: RecurrenceFrequency;
+  due_date: string | null;
   checked_funded: boolean;
   checked_paid: boolean;
   checked_amount: boolean;
-  created_at: string;
+  done: boolean;
+}
+
+export interface ChecklistMonth {
+  period: string;
+  items: ChecklistItem[];
+  total: number;
+  completed: number;
+  in_progress: number;
+  pending: number;
+}
+
+export interface PushSettings {
+  subscribed_devices: number;
+  notify_days_before: number;
+  notify_hour: number;
 }
 
 export interface Budget {
