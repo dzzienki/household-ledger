@@ -45,7 +45,11 @@ export default function RecurringScreen() {
   const deleteMutation = useMutation({
     mutationFn: (rid: string) =>
       api(`/api/ledgers/${ledgerId}/recurring/${rid}`, { method: 'DELETE' }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] });
+      // The monthly checklist (and the home banner) is derived from these rules.
+      queryClient.invalidateQueries({ queryKey: ['checklist', ledgerId] });
+    },
     onError: (err) => {
       notify('오류', getErrorMessage(err, '삭제 실패'));
     },
@@ -223,6 +227,7 @@ function RecurringEditor({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['checklist', ledgerId] });
       queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
       onClose();
     },
