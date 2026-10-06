@@ -41,16 +41,37 @@ def occurrence_in_month(
     end_date: date | None,
     year: int,
     month: int,
+    created_on: date | None = None,
 ) -> tuple[bool, date | None]:
     """Does a recurring rule belong on the checklist for the given month?
 
     Returns (applies, due_date). Monthly and yearly rules have a concrete due
     date. Daily and weekly rules fire many times per month, so they show up as a
     single undated line item every month they are in range (due_date is None).
+
+    start_date is the *first upcoming* due date at the time the rule was made
+    (the app picks the next occurrence on or after today), so a "monthly on the
+    1st" rule created on Oct 5 has start_date Nov 1 even though October's bill
+    exists too. When `created_on` is given, the occurrence just before
+    start_date is included if it falls in the month the rule was created, so
+    this month's bill is not dropped from the checklist. Rules deliberately
+    dated further out are left alone. Reminders leave `created_on` unset so they
+    never fire retroactively.
     """
     month_idx = year * 12 + month - 1
     start_idx = start_date.year * 12 + start_date.month - 1
-    if month_idx < start_idx:
+    first_idx = start_idx
+    if created_on is not None:
+        created_idx = created_on.year * 12 + created_on.month - 1
+        if frequency == RecurrenceFrequency.MONTHLY:
+            prev_idx = start_idx - interval
+        elif frequency == RecurrenceFrequency.YEARLY:
+            prev_idx = start_idx - 12 * interval
+        else:
+            prev_idx = start_idx - 1  # undated: start was pushed into next month
+        if prev_idx == created_idx:
+            first_idx = created_idx
+    if month_idx < first_idx:
         return False, None
     if end_date is not None and month_idx > end_date.year * 12 + end_date.month - 1:
         return False, None

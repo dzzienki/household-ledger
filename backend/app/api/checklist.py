@@ -17,6 +17,7 @@ from app.models import (
 )
 from app.schemas.checklist import ChecklistItem, ChecklistMonth, ChecklistUpdate
 from app.services.checklist import (
+    KST,
     occurrence_in_month,
     parse_period,
     period_key,
@@ -55,7 +56,13 @@ async def build_month(db, ledger_id: UUID, period: str) -> ChecklistMonth:
     items: list[ChecklistItem] = []
     for rule in rules:
         applies, due = occurrence_in_month(
-            rule.frequency, rule.interval, rule.start_date, rule.end_date, year, month
+            rule.frequency,
+            rule.interval,
+            rule.start_date,
+            rule.end_date,
+            year,
+            month,
+            created_on=rule.created_at.astimezone(KST).date(),
         )
         # Paused rules stay out of the list unless that month already has ticks,
         # so history is preserved without showing phantom "missed" bills.

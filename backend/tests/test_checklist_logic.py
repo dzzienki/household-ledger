@@ -71,3 +71,44 @@ def test_reminder_classification():
     assert classify(date(2026, 10, 11), due, 1) == "overdue"
     assert classify(date(2026, 10, 13), due, 1) == "overdue"
     assert classify(date(2026, 10, 14), due, 1) is None
+
+
+def occ_created(freq, start, created, y, m, interval=1, end=None):
+    return occurrence_in_month(freq, interval, start, end, y, m, created_on=created)
+
+
+def test_monthly_rule_created_after_this_months_day_still_shows_this_month():
+    # "monthly on the 1st" made on Oct 5: the app stores start_date = Nov 1.
+    start, created = date(2026, 11, 1), date(2026, 10, 5)
+    assert occ_created(F.MONTHLY, start, created, 2026, 9)[0] is False
+    assert occ_created(F.MONTHLY, start, created, 2026, 10) == (True, date(2026, 10, 1))
+    assert occ_created(F.MONTHLY, start, created, 2026, 11) == (True, date(2026, 11, 1))
+    # Without created_on (reminders) October stays excluded: no retroactive pushes.
+    assert occ(F.MONTHLY, start, 2026, 10) == (False, None)
+
+
+def test_created_on_does_not_pull_in_months_before_creation_month():
+    start, created = date(2026, 11, 1), date(2026, 10, 5)
+    assert occ_created(F.MONTHLY, start, created, 2026, 8)[0] is False
+    # Rule whose start is well after creation (e.g. begins next year) is untouched.
+    assert occ_created(F.MONTHLY, date(2027, 3, 1), created, 2026, 10)[0] is False
+    assert occ_created(F.MONTHLY, date(2027, 3, 1), created, 2027, 2)[0] is False
+
+
+def test_quarterly_rule_only_includes_the_immediately_previous_occurrence():
+    start, created = date(2026, 12, 10), date(2026, 10, 5)
+    assert occ_created(F.MONTHLY, start, created, 2026, 9, interval=3)[0] is False
+    assert occ_created(F.MONTHLY, start, created, 2026, 10, interval=3)[0] is False  # off-phase
+    assert occ_created(F.MONTHLY, start, created, 2026, 12, interval=3)[0] is True
+    # previous occurrence (Sep) is before the creation month -> excluded
+    assert occ_created(F.MONTHLY, start, created, 2026, 9, interval=3)[0] is False
+
+
+def test_yearly_rule_includes_previous_year_only_if_created_in_that_month_or_later():
+    assert occ_created(F.YEARLY, date(2027, 10, 3), date(2026, 10, 5), 2026, 10) == (True, date(2026, 10, 3))
+    assert occ_created(F.YEARLY, date(2027, 3, 20), date(2026, 10, 5), 2026, 3)[0] is False
+
+
+def test_end_date_still_applies_with_created_on():
+    start, created = date(2026, 11, 1), date(2026, 10, 5)
+    assert occ_created(F.MONTHLY, start, created, 2026, 10, end=date(2026, 9, 30))[0] is False
