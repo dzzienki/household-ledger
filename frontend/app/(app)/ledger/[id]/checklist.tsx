@@ -14,8 +14,10 @@ import {
   summarize,
   withToggle,
 } from '@/lib/checklist';
+import { ReorderArrows, ReorderBar } from '@/components/reorder-controls';
 import { notify } from '@/lib/dialog';
 import { formatCurrency } from '@/lib/format';
+import { moveItem, resetOrder, saveOrder } from '@/lib/reorder';
 import { disablePush, enablePush, insecureOrigin, isPushEnabledOnThisDevice, pushSupported } from '@/lib/push';
 import type { Category, ChecklistItem, ChecklistMonth, PushSettings } from '@/lib/types';
 
@@ -74,8 +76,47 @@ export default function ChecklistScreen() {
     },
   });
 
+  const [reordering, setReordering] = useState(false);
+
+  const orderMutation = useMutation({
+    mutationFn: (ids: string[]) => saveOrder(ledgerId!, ids),
+    onMutate: async (ids) => {
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<ChecklistMonth>(queryKey);
+      if (previous) {
+        const byId = new Map(previous.items.map((i) => [i.recurring_id, i]));
+        const items = ids.map((id) => byId.get(id)!).filter(Boolean);
+        queryClient.setQueryData<ChecklistMonth>(queryKey, { ...previous, items });
+      }
+      return { previous };
+    },
+    onError: (err, _ids, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(queryKey, ctx.previous);
+      notify('오류', getErrorMessage(err, '순서 저장 실패'));
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['checklist', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] });
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: () => resetOrder(ledgerId!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['checklist', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] });
+    },
+    onError: (err) => notify('오류', getErrorMessage(err, '되돌리기 실패')),
+  });
+
   const data = checklistQuery.data;
   const today = new Date();
+  const shownItems = data?.items ?? [];
+
+  function move(index: number, delta: -1 | 1) {
+    const next = moveItem(shownItems, index, delta);
+    if (next) orderMutation.mutate(next.map((i) => i.recurring_id));
+  }
 
   return (
     <View style={styles.container}>
@@ -110,7 +151,18 @@ export default function ChecklistScreen() {
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
           refreshing={checklistQuery.isRefetching}
           onRefresh={() => checklistQuery.refetch()}
-          ListHeaderComponent={data && data.total > 0 ? <ProgressCard month={data} /> : null}
+          ListHeaderComponent={
+            data && data.total > 0 ? (
+              <>
+                <ProgressCard month={data} />
+                <ReorderBar
+                  editing={reordering}
+                  onToggle={() => setReordering((v) => !v)}
+                  onReset={() => resetMutation.mutate()}
+                />
+              </>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
               <Text style={styles.empty}>{periodLabel(period)}에 해당하는 반복 거래가 없습니다</Text>
@@ -120,12 +172,13 @@ export default function ChecklistScreen() {
             </View>
           }
           ListFooterComponent={<PushCard />}
-          renderItem={({ item }) => {
+          renderItem={({ item, index }) => {
             const cat = item.category_id ? categoriesById.get(item.category_id) : null;
             const name = item.title || item.payee || cat?.name || '(제목 없음)';
             const overdue = !item.done && item.due_date !== null && period <= thisPeriod && daysUntil(item.due_date, today) < 0;
             return (
-              <View style={[styles.row, item.done && styles.rowDone, overdue && styles.rowOverdue]}>
+              <View style={[styles.row, item.done && styles.rowDone, overdue && styles.rowOverdue, reordering && styles.rowReorder]}>
+                <View style={{ flex: 1 }}>
                 <View style={styles.rowTop}>
                   <View style={[styles.dot, { backgroundColor: cat?.color ?? '#9CA3AF' }]} />
                   <Text style={styles.rowTitle} numberOfLines={1}>
@@ -157,6 +210,15 @@ export default function ChecklistScreen() {
                     );
                   })}
                 </View>
+                </View>
+                {reordering && (
+                  <ReorderArrows
+                    canUp={index > 0}
+                    canDown={index < shownItems.length - 1}
+                    onUp={() => move(index, -1)}
+                    onDown={() => move(index, 1)}
+                  />
+                )}
               </View>
             );
           }}
@@ -349,6 +411,7 @@ const styles = StyleSheet.create({
   progressSub: { fontSize: 11, color: '#6B7280', marginTop: 8 },
 
   row: { padding: 14, backgroundColor: '#F9FAFB', borderRadius: 10, borderWidth: 1, borderColor: 'transparent' },
+  rowReorder: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   rowDone: { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' },
   rowOverdue: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
   rowTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },

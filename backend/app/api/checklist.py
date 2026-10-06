@@ -3,6 +3,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import select
@@ -88,7 +89,21 @@ async def build_month(db, ledger_id: UUID, period: str) -> ChecklistMonth:
             )
         )
 
-    items.sort(key=lambda i: (i.due_date is None, i.due_date or date.max, i.title or i.payee or ""))
+    # Manually placed rules come first in their saved order; anything not placed
+    # yet (e.g. just created) follows, by due date.
+    order = {r.id: r.sort_order for r in rules}
+
+    def sort_key(i: ChecklistItem):
+        pos = order.get(i.recurring_id)
+        return (
+            pos is None,
+            pos if pos is not None else 0,
+            i.due_date is None,
+            i.due_date or date.max,
+            i.title or i.payee or "",
+        )
+
+    items.sort(key=sort_key)
     completed = sum(1 for i in items if i.done)
     pending = sum(1 for i in items if not (i.checked_funded or i.checked_paid or i.checked_amount))
     return ChecklistMonth(
@@ -109,6 +124,58 @@ async def get_checklist(
 ) -> ChecklistMonth:
     ledger, _ = membership
     return await build_month(db, ledger.id, period or period_key(today_kst()))
+
+
+class ChecklistOrder(BaseModel):
+    recurring_ids: list[UUID] = Field(max_length=500)
+
+
+@router.put("/order", status_code=204)
+async def set_order(
+    payload: ChecklistOrder,
+    db: DbDep,
+    membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
+) -> None:
+    """Save the display order. `recurring_ids` is the order of the items the
+    client is showing (one month's subset). Rules not in that month keep their
+    place: the shown rules are re-dealt, in the submitted order, into the slots
+    the shown rules already occupy in the ledger-wide order."""
+    ledger, _ = membership
+    rules = list(
+        (await db.exec(select(RecurringTransaction).where(RecurringTransaction.ledger_id == ledger.id))).all()
+    )
+    by_id = {r.id: r for r in rules}
+    ids = payload.recurring_ids
+    if len(set(ids)) != len(ids) or any(i not in by_id for i in ids):
+        raise HTTPException(status_code=400, detail="Invalid recurring rule list")
+
+    current = sorted(
+        rules,
+        key=lambda r: (r.sort_order is None, r.sort_order if r.sort_order is not None else 0, r.next_due_date),
+    )
+    submitted = set(ids)
+    deal = iter(ids)
+    final = [by_id[next(deal)] if r.id in submitted else r for r in current]
+    for idx, rule in enumerate(final):
+        rule.sort_order = idx
+        db.add(rule)
+    await db.commit()
+
+
+@router.delete("/order", status_code=204)
+async def reset_order(
+    db: DbDep,
+    membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
+) -> None:
+    """Forget the manual order; the checklist goes back to due-date order."""
+    ledger, _ = membership
+    rules = (
+        await db.exec(select(RecurringTransaction).where(RecurringTransaction.ledger_id == ledger.id))
+    ).all()
+    for rule in rules:
+        rule.sort_order = None
+        db.add(rule)
+    await db.commit()
 
 
 @router.patch("/{recurring_id}", response_model=ChecklistItem)

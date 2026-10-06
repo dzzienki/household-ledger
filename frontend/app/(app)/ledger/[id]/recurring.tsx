@@ -5,8 +5,10 @@ import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, 
 import { confirmAsync, notify } from '@/lib/dialog';
 
 import { AmountInput } from '@/components/amount-input';
+import { ReorderArrows, ReorderBar } from '@/components/reorder-controls';
 import { ApiError, api, getErrorMessage } from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
+import { moveItem, resetOrder, saveOrder } from '@/lib/reorder';
 import {
   WEEKDAYS,
   computeStartDate,
@@ -55,6 +57,50 @@ export default function RecurringScreen() {
     },
   });
 
+  const [reordering, setReordering] = useState(false);
+  const rules = rulesQuery.data ?? [];
+
+  const orderMutation = useMutation({
+    mutationFn: (ids: string[]) => saveOrder(ledgerId!, ids),
+    onMutate: async (ids) => {
+      await queryClient.cancelQueries({ queryKey: ['recurring', ledgerId] });
+      const previous = queryClient.getQueryData<RecurringTransaction[]>(['recurring', ledgerId]);
+      if (previous) {
+        const byId = new Map(previous.map((r) => [r.id, r]));
+        queryClient.setQueryData<RecurringTransaction[]>(
+          ['recurring', ledgerId],
+          ids.map((id) => byId.get(id)!).filter(Boolean),
+        );
+      }
+      return { previous };
+    },
+    onError: (err, _ids, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['recurring', ledgerId], ctx.previous);
+      notify('오류', getErrorMessage(err, '순서 저장 실패'));
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['checklist', ledgerId] });
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: () => resetOrder(ledgerId!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recurring', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['checklist', ledgerId] });
+    },
+    onError: (err) => notify('오류', getErrorMessage(err, '되돌리기 실패')),
+  });
+
+  // Active rules always list before paused ones, so only allow moves within a group.
+  function move(index: number, delta: -1 | 1) {
+    const neighbor = rules[index + delta];
+    if (!neighbor || neighbor.active !== rules[index].active) return;
+    const next = moveItem(rules, index, delta);
+    if (next) orderMutation.mutate(next.map((r) => r.id));
+  }
+
   const categoriesById = new Map((categoriesQuery.data ?? []).map((c) => [c.id, c]));
 
   if (rulesQuery.isLoading) {
@@ -70,20 +116,27 @@ export default function RecurringScreen() {
       <Stack.Screen options={{ title: '반복 거래' }} />
 
       <FlatList
-        data={rulesQuery.data ?? []}
+        data={rules}
         keyExtractor={(r) => r.id}
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         ListHeaderComponent={
-          (rulesQuery.data ?? []).length > 0 ? (
-            <Pressable onPress={() => router.push(`/(app)/ledger/${ledgerId}/checklist`)}>
-              <Text style={styles.legend}>
-                📋 이체·납부·금액 체크는 <Text style={styles.legendLink}>월별 체크리스트</Text>에서 합니다 →
-              </Text>
-            </Pressable>
+          rules.length > 0 ? (
+            <>
+              <Pressable onPress={() => router.push(`/(app)/ledger/${ledgerId}/checklist`)}>
+                <Text style={styles.legend}>
+                  📋 이체·납부·금액 체크는 <Text style={styles.legendLink}>월별 체크리스트</Text>에서 합니다 →
+                </Text>
+              </Pressable>
+              <ReorderBar
+                editing={reordering}
+                onToggle={() => setReordering((v) => !v)}
+                onReset={() => resetMutation.mutate()}
+              />
+            </>
           ) : null
         }
-        renderItem={({ item }) => {
+        renderItem={({ item, index }) => {
           const cat = item.category_id ? categoriesById.get(item.category_id) : null;
           return (
             <View style={[styles.row, !item.active && { opacity: 0.55 }]}>
@@ -116,6 +169,14 @@ export default function RecurringScreen() {
                   {item.memo ? <Text style={styles.rowMemo}>{item.memo}</Text> : null}
                 </Pressable>
               </View>
+              {reordering ? (
+                <ReorderArrows
+                  canUp={index > 0 && rules[index - 1].active === item.active}
+                  canDown={index < rules.length - 1 && rules[index + 1].active === item.active}
+                  onUp={() => move(index, -1)}
+                  onDown={() => move(index, 1)}
+                />
+              ) : (
               <Pressable
                 onPress={async () => {
                   if (await confirmAsync('반복 규칙 삭제', '삭제하시겠습니까?', { confirmText: '삭제', destructive: true }))
@@ -125,6 +186,7 @@ export default function RecurringScreen() {
               >
                 <Text style={styles.deleteIcon}>🗑️</Text>
               </Pressable>
+              )}
             </View>
           );
         }}

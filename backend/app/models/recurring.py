@@ -38,6 +38,9 @@ class RecurringTransaction(UUIDPKMixin, TimestampMixin, SQLModel, table=True):
     end_date: date | None = Field(default=None)
     next_due_date: date = Field(index=True)
     active: bool = Field(default=True)
+    # Manual display order on the monthly checklist (shared by all members and all
+    # months). NULL = not placed yet, falls back to due-date order after placed ones.
+    sort_order: int | None = Field(default=None)
 
 
 class RecurringCheck(UUIDPKMixin, TimestampMixin, SQLModel, table=True):

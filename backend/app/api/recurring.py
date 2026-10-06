@@ -36,7 +36,12 @@ async def list_recurring(
     stmt = (
         select(RecurringTransaction)
         .where(RecurringTransaction.ledger_id == ledger.id)
-        .order_by(RecurringTransaction.active.desc(), RecurringTransaction.next_due_date)
+        .order_by(
+            RecurringTransaction.active.desc(),
+            RecurringTransaction.sort_order.is_(None),
+            RecurringTransaction.sort_order,
+            RecurringTransaction.next_due_date,
+        )
     )
     return list((await db.exec(stmt)).all())
 
