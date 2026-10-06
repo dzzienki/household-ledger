@@ -2,7 +2,7 @@ import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { ApiError, api, getErrorMessage } from '@/lib/api';
+import { api, getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { REMEMBERED_EMAIL_KEY, storage } from '@/lib/storage';
 import type { InvitationAcceptResponse } from '@/lib/types';

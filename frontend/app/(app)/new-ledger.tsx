@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { notify } from '@/lib/dialog';
 
-import { ApiError, api, getErrorMessage } from '@/lib/api';
+import { api, getErrorMessage } from '@/lib/api';
 import { CURRENCIES } from '@/lib/currencies';
 import type { Ledger, LedgerType } from '@/lib/types';
 

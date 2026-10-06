@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { notify } from '@/lib/dialog';
 
-import { API_URL, ApiError, apiDownloadBlob, apiUpload, getErrorMessage } from '@/lib/api';
+import { API_URL, apiDownloadBlob, apiUpload, getErrorMessage } from '@/lib/api';
 import { ACCESS_TOKEN_KEY, storage } from '@/lib/storage';
 
 interface ImportResult {

@@ -2,7 +2,7 @@ import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { ApiError, getErrorMessage } from '@/lib/api';
+import { getErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 
 export default function SignupScreen() {

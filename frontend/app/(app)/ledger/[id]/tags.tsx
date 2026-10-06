@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { confirmAsync, notify } from '@/lib/dialog';
 
-import { ApiError, api, getErrorMessage } from '@/lib/api';
+import { api, getErrorMessage } from '@/lib/api';
 import { CATEGORY_COLOR_PALETTE } from '@/lib/colors';
 import type { Tag } from '@/lib/types';
 

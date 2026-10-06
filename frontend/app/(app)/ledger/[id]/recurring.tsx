@@ -6,7 +6,7 @@ import { confirmAsync, notify } from '@/lib/dialog';
 
 import { AmountInput } from '@/components/amount-input';
 import { ReorderArrows, ReorderBar } from '@/components/reorder-controls';
-import { ApiError, api, getErrorMessage } from '@/lib/api';
+import { api, getErrorMessage } from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
 import { moveItem, resetOrder, saveOrder } from '@/lib/reorder';
 import {

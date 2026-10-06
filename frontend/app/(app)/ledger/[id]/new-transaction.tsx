@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { notify } from '@/lib/dialog';
 
 import { TransactionForm, type TransactionFormValue } from '@/components/transaction-form';
-import { ApiError, api, getErrorMessage } from '@/lib/api';
+import { api, getErrorMessage } from '@/lib/api';
 import type { Category, Transaction } from '@/lib/types';
 
 export default function NewTransactionScreen() {
