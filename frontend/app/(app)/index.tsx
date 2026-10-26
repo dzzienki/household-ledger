@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
+import { useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { ChangePasswordModal } from '@/components/change-password-modal';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import type { Ledger } from '@/lib/types';
@@ -9,6 +11,7 @@ import type { Ledger } from '@/lib/types';
 export default function LedgerListScreen() {
   const { user, signOut } = useAuth();
   const router = useRouter();
+  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
 
   const { data: ledgers, isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: ['ledgers'],
@@ -37,10 +40,21 @@ export default function LedgerListScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.greeting}>안녕하세요, {user?.name}님</Text>
-        <Pressable onPress={signOut}>
-          <Text style={styles.logoutText}>로그아웃</Text>
-        </Pressable>
+        <View style={styles.userInfo}>
+          <Text style={styles.greeting}>안녕하세요, {user?.name}님</Text>
+          {user?.email ? <Text style={styles.userEmail}>{user.email}</Text> : null}
+        </View>
+        <View style={styles.headerActions}>
+          <Pressable
+            onPress={() => setPasswordModalVisible(true)}
+            style={styles.headerActionBtn}
+          >
+            <Text style={styles.headerActionText}>비밀번호 변경</Text>
+          </Pressable>
+          <Pressable onPress={signOut} style={styles.headerActionBtn}>
+            <Text style={styles.logoutText}>로그아웃</Text>
+          </Pressable>
+        </View>
       </View>
 
       <FlatList
@@ -73,6 +87,11 @@ export default function LedgerListScreen() {
       >
         <Text style={styles.fabText}>+ 새 가계부</Text>
       </Pressable>
+
+      <ChangePasswordModal
+        visible={passwordModalVisible}
+        onClose={() => setPasswordModalVisible(false)}
+      />
     </View>
   );
 }
@@ -88,8 +107,25 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
+  userInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
   greeting: { fontSize: 16, fontWeight: '600' },
-  logoutText: { color: '#6B7280', fontSize: 14 },
+  userEmail: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerActionBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  headerActionText: { color: '#374151', fontSize: 13, fontWeight: '500' },
+  logoutText: { color: '#DC2626', fontSize: 13, fontWeight: '500' },
   list: { padding: 16 },
   card: {
     flexDirection: 'row',

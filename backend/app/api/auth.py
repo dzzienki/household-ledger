@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from app.api.deps import DbDep
+from app.api.deps import CurrentUser, DbDep
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -12,7 +12,13 @@ from app.core.security import (
     verify_password,
 )
 from app.models import Ledger, LedgerMember, LedgerRole, LedgerType, User
-from app.schemas.auth import LoginRequest, RefreshRequest, SignupRequest, TokenResponse
+from app.schemas.auth import (
+    ChangePasswordRequest,
+    LoginRequest,
+    RefreshRequest,
+    SignupRequest,
+    TokenResponse,
+)
 from app.schemas.user import UserPublic
 from app.services.categories import seed_default_categories
 
@@ -89,3 +95,27 @@ async def refresh(payload: RefreshRequest, db: DbDep) -> TokenResponse:
         access_token=create_access_token(user.id),
         refresh_token=create_refresh_token(user.id),
     )
+
+
+@router.post("/change-password")
+async def change_password(
+    payload: ChangePasswordRequest,
+    current_user: CurrentUser,
+    db: DbDep,
+) -> dict[str, str]:
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="현재 비밀번호가 일치하지 않습니다.",
+        )
+    if payload.current_password == payload.new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="새 비밀번호는 현재 비밀번호와 달라야 합니다.",
+        )
+
+    current_user.hashed_password = hash_password(payload.new_password)
+    db.add(current_user)
+    await db.commit()
+    return {"message": "비밀번호가 성공적으로 변경되었습니다."}
+
