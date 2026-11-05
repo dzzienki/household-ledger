@@ -437,22 +437,27 @@ def _parse_with_gemini_ai(
     )
 
     client = _gemini_client()
-    from app.core.config import settings
     from google.genai import types as genai_types
+    from app.services.ai import generate_content_with_retry, _format_gemini_exception
 
-    response = client.models.generate_content(
-        model=settings.GEMINI_MODEL,
-        contents=[
-            genai_types.Part.from_bytes(data=content, mime_type=media_type),
-            prompt,
-        ],
-        config=genai_types.GenerateContentConfig(
-            system_instruction="Extract all card statement transactions accurately into JSON.",
-            response_mime_type="application/json",
-            temperature=0.1,
-        ),
-    )
-    parsed = _extract_json(response.text or "{}")
+    try:
+        response = generate_content_with_retry(
+            client=client,
+            contents=[
+                genai_types.Part.from_bytes(data=content, mime_type=media_type),
+                prompt,
+            ],
+            config=genai_types.GenerateContentConfig(
+                system_instruction="Extract all card statement transactions accurately into JSON.",
+                response_mime_type="application/json",
+                temperature=0.1,
+            ),
+        )
+        parsed = _extract_json(response.text or "{}")
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise _format_gemini_exception(exc) from exc
 
     card_company = parsed.get("card_company")
     raw_items = parsed.get("items") or []

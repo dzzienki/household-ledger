@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -30,6 +32,7 @@ def get_ai_status() -> dict[str, Any]:
         "enabled": is_ai_enabled(),
         "provider": "gemini",
         "model": settings.GEMINI_MODEL,
+        "models_chain": settings.gemini_models_chain,
     }
 
 
@@ -37,6 +40,112 @@ def _gemini_client() -> genai.Client:
     if not settings.GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is not configured")
     return genai.Client(api_key=settings.GEMINI_API_KEY)
+
+
+def _is_transient_gemini_error(exc: Exception) -> bool:
+    """Return True if the error is temporary (e.g. server overload, rate limit, network timeout)."""
+    exc_str = str(exc).lower()
+    transient_indicators = [
+        "503",
+        "unavailable",
+        "high demand",
+        "overloaded",
+        "spikes in demand",
+        "temporarily unavailable",
+        "429",
+        "resource_exhausted",
+        "quota",
+        "rate limit",
+        "too many requests",
+        "500 internal",
+        "502 bad gateway",
+        "504 gateway timeout",
+        "deadline exceeded",
+        "connection reset",
+        "connection error",
+        "timeout",
+    ]
+    return any(ind in exc_str for ind in transient_indicators)
+
+
+def _format_gemini_exception(exc: Exception | None) -> RuntimeError:
+    """Transform raw SDK exceptions into polite, user-friendly error messages."""
+    if exc is None:
+        return RuntimeError("AI 서비스 응답을 받지 못했습니다.")
+    exc_str = str(exc)
+    exc_str_lower = exc_str.lower()
+    if any(k in exc_str_lower for k in ["503", "unavailable", "high demand", "overloaded", "spikes in demand"]):
+        return RuntimeError(
+            "AI 서비스(Gemini) 사용량이 일시적으로 급증하여 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요."
+        )
+    if any(k in exc_str_lower for k in ["429", "resource_exhausted", "quota", "rate limit"]):
+        return RuntimeError(
+            "AI 서비스(Gemini) 요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요."
+        )
+    if any(k in exc_str_lower for k in ["api_key_invalid", "unauthenticated", "permission_denied"]):
+        return RuntimeError(
+            "AI 서비스(Gemini) API 키가 유효하지 않거나 권한이 없습니다. 서버 설정을 확인해 주세요."
+        )
+    return RuntimeError(f"Gemini API 오류가 발생했습니다: {exc_str}")
+
+
+def generate_content_with_retry(
+    *,
+    client: genai.Client,
+    contents: Any,
+    config: genai_types.GenerateContentConfig,
+    models: list[str] | None = None,
+    max_retries_per_model: int = 2,
+    base_delay: float = 1.0,
+) -> Any:
+    """Generate content with automatic exponential backoff retry and model fallback.
+
+    If the primary model is experiencing high demand (HTTP 503 / 429), it retries
+    with jittered backoff, and if still overloaded, seamlessly falls back to secondary models.
+    """
+    candidate_models = models or settings.gemini_models_chain
+    last_exception: Exception | None = None
+
+    for model_name in candidate_models:
+        delay = base_delay
+        for attempt in range(max_retries_per_model):
+            try:
+                logger.info(
+                    "Calling Gemini model %s (attempt %d/%d)",
+                    model_name,
+                    attempt + 1,
+                    max_retries_per_model,
+                )
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                )
+                return response
+            except Exception as exc:
+                last_exception = exc
+                is_transient = _is_transient_gemini_error(exc)
+                logger.warning(
+                    "Gemini API error on %s (attempt %d/%d, transient=%s): %s",
+                    model_name,
+                    attempt + 1,
+                    max_retries_per_model,
+                    is_transient,
+                    exc,
+                )
+                if not is_transient:
+                    # Non-transient error (e.g. invalid API key, safety block)
+                    raise _format_gemini_exception(exc) from exc
+
+                if attempt < max_retries_per_model - 1:
+                    sleep_time = delay + random.uniform(0.1, 0.4)
+                    logger.info("Transient error on %s, sleeping %.2fs before retry...", model_name, sleep_time)
+                    time.sleep(sleep_time)
+                    delay *= 1.8
+                else:
+                    logger.warning("Retries exhausted for model %s. Checking fallback models...", model_name)
+
+    raise _format_gemini_exception(last_exception)
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -120,8 +229,8 @@ def suggest_category(
 
     try:
         client = _gemini_client()
-        response = client.models.generate_content(
-            model=settings.GEMINI_MODEL,
+        response = generate_content_with_retry(
+            client=client,
             contents=user_msg,
             config=genai_types.GenerateContentConfig(
                 system_instruction=system,
@@ -130,8 +239,10 @@ def suggest_category(
             ),
         )
         parsed = _extract_json(response.text or "{}")
+    except RuntimeError:
+        raise
     except Exception as exc:
-        raise RuntimeError(f"Gemini API error: {exc}") from exc
+        raise _format_gemini_exception(exc) from exc
 
     cat_id_raw = parsed.get("category_id")
     cat_id: UUID | None = None
@@ -203,8 +314,8 @@ def extract_receipt(
 
     try:
         client = _gemini_client()
-        response = client.models.generate_content(
-            model=settings.GEMINI_MODEL,
+        response = generate_content_with_retry(
+            client=client,
             contents=[
                 genai_types.Part.from_bytes(data=image_bytes, mime_type=media_type),
                 "Extract the receipt fields and line items.",
@@ -216,8 +327,10 @@ def extract_receipt(
             ),
         )
         parsed = _extract_json(response.text or "{}")
+    except RuntimeError:
+        raise
     except Exception as exc:
-        raise RuntimeError(f"Gemini API error: {exc}") from exc
+        raise _format_gemini_exception(exc) from exc
 
     raw_items = parsed.get("items") or []
     items: list[ReceiptItem] = []

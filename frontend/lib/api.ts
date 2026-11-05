@@ -45,7 +45,14 @@ const COMMON_ERROR_TRANSLATIONS: Record<string, string> = {
   'User is already a member': '이미 이 가계부에 참여 중인 멤버입니다',
   'Cannot remove the owner': '가계부 소유자는 제거할 수 없습니다',
   'AI features are disabled (no ANTHROPIC_API_KEY)': 'AI 기능이 비활성화되어 있습니다 (API 키 필요)',
+  'AI features are disabled (no GEMINI_API_KEY)': 'AI 기능이 비활성화되어 있습니다 (GEMINI_API_KEY 설정 필요)',
+  'AI features are disabled': 'AI 기능이 비활성화되어 있습니다 (API 키 설정 필요)',
   'Claude API error': 'AI 서비스 응답 중 오류가 발생했습니다',
+  'Gemini API error': 'AI 서비스(Gemini) 응답 중 일시적 오류가 발생했습니다',
+  'high demand': 'AI 서비스 사용량이 급증하여 일시적으로 지연되고 있습니다. 잠시 후 다시 시도해 주세요',
+  '503 UNAVAILABLE': 'AI 서비스 서버 사용량이 일시적으로 급증했습니다. 잠시 후 다시 시도해 주세요',
+  'UNAVAILABLE': 'AI 서비스 서버가 일시적으로 원활하지 않습니다. 잠시 후 다시 시도해 주세요',
+  'RESOURCE_EXHAUSTED': 'AI 서비스 요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요',
 };
 
 interface ValidationErrorItem {

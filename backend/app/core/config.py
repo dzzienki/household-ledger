@@ -22,7 +22,18 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = ""
 
     GEMINI_API_KEY: str | None = None
-    GEMINI_MODEL: str = "gemini-3.6-flash"
+    GEMINI_MODEL: str = "gemini-3.8-flash"
+    GEMINI_FALLBACK_MODELS: str = "gemini-3.6-flash,gemini-2.5-flash"
+
+    @property
+    def gemini_models_chain(self) -> list[str]:
+        """Candidate Gemini models to try in order (primary followed by fallbacks, deduplicated)."""
+        models = [self.GEMINI_MODEL] if self.GEMINI_MODEL else []
+        for m in self.GEMINI_FALLBACK_MODELS.split(","):
+            cleaned = m.strip()
+            if cleaned and cleaned not in models:
+                models.append(cleaned)
+        return models or ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash"]
 
     UPLOAD_DIR: str = "uploads"
 

@@ -32,13 +32,17 @@ export function formatDate(iso: string): string {
  * For KRW (and zero-decimal currencies), decimals are completely disallowed (1원 단위).
  */
 export function sanitizeAmountInput(text: string, allowDecimals = false): string {
+  const isNeg = text.trim().startsWith('-');
+  const sign = isNeg ? '-' : '';
   if (!allowDecimals) {
-    return text.split('.')[0].replace(/[^\d]/g, '');
+    const digits = text.split('.')[0].replace(/[^\d]/g, '');
+    return digits ? `${sign}${digits}` : sign;
   }
   const cleaned = text.replace(/[^\d.]/g, '');
   const firstDot = cleaned.indexOf('.');
-  if (firstDot === -1) return cleaned;
-  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+  const numPart =
+    firstDot === -1 ? cleaned : cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+  return numPart ? `${sign}${numPart}` : sign;
 }
 
 /**
@@ -50,19 +54,21 @@ export function formatAmountInput(raw: string | number | null | undefined, allow
   if (raw === null || raw === undefined) return '';
   const str = String(raw).trim();
   if (!str) return '';
+  const isNeg = str.startsWith('-');
+  const sign = isNeg ? '-' : '';
 
   if (!allowDecimals) {
     const intDigits = str.split('.')[0].replace(/[^\d]/g, '');
-    if (!intDigits) return '';
+    if (!intDigits) return sign;
     const intStripped = intDigits.replace(/^0+(?=\d)/, '');
-    return intStripped.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return `${sign}${intStripped.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
   }
 
   const hasDot = str.includes('.');
   const [intPart, ...decParts] = str.split('.');
   const intDigits = intPart.replace(/[^\d]/g, '');
   const intStripped = intDigits.replace(/^0+(?=\d)/, '') || (intDigits === '0' ? '0' : '');
-  const intFormatted = intStripped.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const intFormatted = intDigits ? `${sign}${intStripped.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}` : sign;
   const decClean = decParts.join('').replace(/[^\d]/g, '');
   return hasDot ? `${intFormatted}.${decClean}` : intFormatted;
 }
