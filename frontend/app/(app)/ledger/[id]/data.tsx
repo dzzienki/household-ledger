@@ -63,6 +63,34 @@ export default function DataScreen() {
   const [pickingStatement, setPickingStatement] = useState(false);
   const [statementResult, setStatementResult] = useState<StatementResult | null>(null);
   const [categorizing, setCategorizing] = useState(false);
+  const [fixingIncomes, setFixingIncomes] = useState(false);
+
+  async function handleFixLegacyIncomes() {
+    const ok = await confirmAsync(
+      '과거 수입 거래 일괄 복구',
+      '이전에 엑셀에서 지출로 잘못 등록되었던 급여(강유리급여 등), 통장 이자, 허브통장 입금 등의 거래를 자동으로 감지하여 정상적인 수입(+)으로 복구합니다. 진행하시겠습니까?',
+      { confirmText: '복구 실행' },
+    );
+    if (!ok) return;
+
+    setFixingIncomes(true);
+    try {
+      const res = await api<{
+        converted_count: number;
+        converted_amount: number;
+        message: string;
+      }>(`/api/ledgers/${ledgerId}/transactions/fix-legacy-incomes`, { method: 'POST' });
+      notify('수입 거래 복구 완료', res.message);
+      queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['categories', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['stats'] });
+      queryClient.invalidateQueries({ queryKey: ['summary', ledgerId] });
+    } catch (err) {
+      notify('복구 실패', getErrorMessage(err, '수입 거래 복구 실패'));
+    } finally {
+      setFixingIncomes(false);
+    }
+  }
 
   // 내부 이체 중복 탐지 상태
   const [scanningTransfers, setScanningTransfers] = useState(false);
@@ -291,6 +319,25 @@ export default function DataScreen() {
           onPress={() => router.push(`/(app)/ledger/${ledgerId}/statement-import`)}
         >
           <Text style={styles.highlightButtonText}>🚀 토스 / 카드 명세서 가져오기</Text>
+        </Pressable>
+      </View>
+
+      {/* 과거 지출로 잘못 등록된 수입 거래 일괄 복구 */}
+      <View style={[styles.card, { borderColor: '#BBF7D0', backgroundColor: '#F0FDF4' }]}>
+        <Text style={[styles.cardTitle, { color: '#166534' }]}>💰 과거 지출로 잘못 등록된 수입 거래 일괄 복구</Text>
+        <Text style={styles.cardHint}>
+          과거 명세서 업로드 시 지출(EXPENSE)로 잘못 저장되었던 급여(강유리급여 등), 통장 이자, 허브통장 입금 내역을 자동으로 수입(+)으로 전환하고 올바른 수입 카테고리로 정리합니다.
+        </Text>
+        <Pressable
+          style={[styles.button, { backgroundColor: '#16A34A' }, fixingIncomes && { opacity: 0.6 }]}
+          disabled={fixingIncomes}
+          onPress={handleFixLegacyIncomes}
+        >
+          {fixingIncomes ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>🔄 지출로 잡힌 수입 거래 정상 복구 실행</Text>
+          )}
         </Pressable>
       </View>
 

@@ -24,6 +24,7 @@ from app.schemas.tag import TagPublic
 from app.schemas.transaction import (
     BatchCategorizeResponse,
     BulkDeleteResponse,
+    FixLegacyIncomesResponse,
     InternalTransferItem,
     InternalTransferListResponse,
     InternalTransferPair,
@@ -558,6 +559,88 @@ async def resolve_internal_transfer_pairs(
     )
 
 
+async def _fix_legacy_incomes_for_ledger(db, ledger_id: UUID) -> tuple[int, Decimal]:
+    """Scans and converts transactions mistakenly imported as EXPENSE into INCOME."""
+    from app.services.categories import ensure_standard_categories
+    categories = await ensure_standard_categories(db, ledger_id)
+
+    # Map income categories
+    income_cats = {c.name: c.id for c in categories if str(c.type).lower() in ("transactiontype.income", "income")}
+    salary_cat_id = next((c_id for c_name, c_id in income_cats.items() if any(k in c_name for k in ["급여", "월급", "소득"])), None)
+    interest_cat_id = next((c_id for c_name, c_id in income_cats.items() if any(k in c_name for k in ["이자", "금융"])), None)
+    misc_inc_cat_id = next((c_id for c_name, c_id in income_cats.items() if any(k in c_name for k in ["기타 수입", "기타수입", "부수입", "수입"])), None)
+
+    stmt = select(Transaction).where(
+        Transaction.ledger_id == ledger_id,
+        Transaction.type == TransactionType.EXPENSE,
+    )
+    txns = list((await db.exec(stmt)).all())
+
+    SALARY_KW = ["급여", "월급", "상여", "보너스", "수당"]
+    INTEREST_KW = ["통장 이자", "통장이자", "예금이자", "적금이자", "이자입금"]
+    MISC_INCOME_KW = ["atm입금", "수술비지원", "코다리찜", "관리비", "공과금", "환급", "연말정산", "캐시백", "지원받은돈", "남은거"]
+    OUTFLOW_KW = ["신용대출", "대출", "카드", "용돈", "교통비", "보험비", "데이트", "수술비", "취득세", "갚기", "스커트", "가습기", "케이크", "베개", "택시", "린클", "수리비"]
+
+    converted_count = 0
+    converted_amount = Decimal(0)
+
+    for t in txns:
+        text = f"{t.payee or ''} {t.memo or ''}".lower().strip()
+        is_income = False
+        target_cat_id = None
+
+        if any(k in text for k in SALARY_KW):
+            is_income = True
+            target_cat_id = salary_cat_id or misc_inc_cat_id
+        elif any(k in text for k in INTEREST_KW):
+            is_income = True
+            target_cat_id = interest_cat_id or misc_inc_cat_id
+        elif any(k in text for k in MISC_INCOME_KW) and not any(ok in (t.memo or "").lower() for ok in ["갚기", "출금"]):
+            is_income = True
+            target_cat_id = misc_inc_cat_id
+        elif (t.payee or "").strip() in ["최명준", "강유리"]:
+            if not any(ok in (t.memo or "").lower() for ok in OUTFLOW_KW):
+                is_income = True
+                if t.amount >= 1000000:
+                    target_cat_id = salary_cat_id or misc_inc_cat_id
+                else:
+                    target_cat_id = misc_inc_cat_id
+
+        if is_income:
+            t.type = TransactionType.INCOME
+            if target_cat_id:
+                t.category_id = target_cat_id
+            db.add(t)
+            converted_count += 1
+            converted_amount += t.amount
+
+    if converted_count > 0:
+        await db.commit()
+
+    return converted_count, converted_amount
+
+
+@router.post("/fix-legacy-incomes", response_model=FixLegacyIncomesResponse)
+async def fix_legacy_incomes_endpoint(
+    db: DbDep,
+    membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
+) -> FixLegacyIncomesResponse:
+    """Detects and fixes transactions erroneously imported as EXPENSE instead of INCOME."""
+    ledger, _ = membership
+    count, total_amt = await _fix_legacy_incomes_for_ledger(db, ledger.id)
+    if count == 0:
+        return FixLegacyIncomesResponse(
+            converted_count=0,
+            converted_amount=Decimal(0),
+            message="수입으로 복구할 대상 거래가 없습니다.",
+        )
+    return FixLegacyIncomesResponse(
+        converted_count=count,
+        converted_amount=total_amt,
+        message=f"총 {count}건의 거래(총 {total_amt:,.0f}원)를 정상적으로 수입으로 복구하였습니다.",
+    )
+
+
 @router.post("/batch-categorize", response_model=BatchCategorizeResponse)
 async def batch_auto_categorize_transactions(
     db: DbDep,
@@ -565,8 +648,13 @@ async def batch_auto_categorize_transactions(
     force_all: bool = Query(default=False, description="Re-evaluate all transactions even if already categorized"),
     reclassify_misc: bool = Query(default=True, description="Also re-evaluate transactions currently in 기타 지출 / 기타 수입 to refine them"),
     deduplicate_transfers: bool = Query(default=False, description="Automatically remove exact inter-account transfer duplicate transactions"),
+    fix_legacy_incomes: bool = Query(default=True, description="Convert legacy statement transactions that were erroneously marked as EXPENSE into INCOME"),
 ) -> BatchCategorizeResponse:
     ledger, _ = membership
+
+    fixed_incomes_count = 0
+    if fix_legacy_incomes:
+        fixed_incomes_count, _ = await _fix_legacy_incomes_for_ledger(db, ledger.id)
 
     from app.services.categories import ensure_standard_categories
     # Ensure standard categories exist (adds 보험, 금융/대출, 저축/투자, 경조사/선물, 용돈 if missing)
@@ -597,6 +685,9 @@ async def batch_auto_categorize_transactions(
     txns = list((await db.exec(stmt)).all())
     total_processed = len(txns)
     if total_processed == 0:
+        msg = f"분류할 대상 거래가 없습니다.{f' (내부 이체 중복 {removed_transfers_count}건 정리 완료)' if removed_transfers_count > 0 else ''}"
+        if fixed_incomes_count > 0:
+            msg += f" (과거 수입 거래 {fixed_incomes_count}건 정상 복구 완료)"
         return BatchCategorizeResponse(
             total_processed=0,
             categorized_count=0,
@@ -604,7 +695,7 @@ async def batch_auto_categorize_transactions(
             ai_count=0,
             remaining_count=0,
             removed_transfers_count=removed_transfers_count,
-            message=f"분류할 대상 거래가 없습니다.{f' (내부 이체 중복 {removed_transfers_count}건 정리 완료)' if removed_transfers_count > 0 else ''}",
+            message=msg,
         )
 
     rules_count = 0
@@ -661,6 +752,8 @@ async def batch_auto_categorize_transactions(
     remaining = total_processed - categorized_count
 
     msg_parts = [f"총 {total_processed}건 검토 중 {categorized_count}건 세분화/분류 완료 (규칙: {rules_count}건, AI: {ai_count}건)"]
+    if fixed_incomes_count > 0:
+        msg_parts.append(f"과거 수입 거래 {fixed_incomes_count}건 정상 복구")
     if removed_transfers_count > 0:
         msg_parts.append(f"내부 이체 중복 {removed_transfers_count}건 정리")
     if remaining > 0:

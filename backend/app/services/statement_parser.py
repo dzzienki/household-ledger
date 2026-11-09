@@ -484,8 +484,16 @@ def _parse_xlsx_openpyxl(content: bytes) -> list[list[Any]]:
     return rows
 
 
+def _col_letter_to_index(col_letter: str) -> int:
+    idx = 0
+    for ch in col_letter.upper():
+        if "A" <= ch <= "Z":
+            idx = idx * 26 + (ord(ch) - ord("A") + 1)
+    return max(0, idx - 1)
+
+
 def _parse_xlsx_xml(content: bytes) -> list[list[Any]]:
-    """Fallback XML parser for non-standard or slightly corrupt xlsx files."""
+    """Robust XML parser for xlsx files, correctly mapping sparse cell coordinates."""
     import zipfile
     with zipfile.ZipFile(io.BytesIO(content), "r") as z:
         shared_strings: list[str] = []
@@ -502,17 +510,26 @@ def _parse_xlsx_xml(content: bytes) -> list[list[Any]]:
         tree = ET.fromstring(z.read(sheet_files[0]))
         rows: list[list[Any]] = []
         for row_elem in tree.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row"):
-            cells = []
+            row_dict: dict[int, Any] = {}
+            max_col = 0
             for c in row_elem.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c"):
+                ref = c.attrib.get("r", "")
+                m = re.match(r"^([A-Za-z]+)", ref)
+                col_idx = _col_letter_to_index(m.group(1)) if m else len(row_dict)
+                max_col = max(max_col, col_idx)
+
                 cell_type = c.attrib.get("t")
                 val_elem = c.find("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v")
                 val = val_elem.text if val_elem is not None else None
                 if cell_type == "s" and val is not None:
                     try:
-                        val = shared_strings[int(val)] if int(val) < len(shared_strings) else val
+                        s_idx = int(val)
+                        val = shared_strings[s_idx] if s_idx < len(shared_strings) else val
                     except ValueError:
                         pass
-                cells.append(val)
+                row_dict[col_idx] = val
+
+            cells = [row_dict.get(i) for i in range(max_col + 1)] if row_dict else []
             rows.append(cells)
         return rows
 

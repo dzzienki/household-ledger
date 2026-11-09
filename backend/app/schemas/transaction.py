@@ -108,3 +108,10 @@ class InternalTransferResolveResponse(BaseModel):
     message: str
 
 
+class FixLegacyIncomesResponse(BaseModel):
+    converted_count: int
+    converted_amount: Decimal
+    message: str
+
+
+
