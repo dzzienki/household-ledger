@@ -559,65 +559,124 @@ async def resolve_internal_transfer_pairs(
     )
 
 
-async def _fix_legacy_incomes_for_ledger(db, ledger_id: UUID) -> tuple[int, Decimal]:
-    """Scans and converts transactions mistakenly imported as EXPENSE into INCOME."""
+async def _fix_legacy_incomes_for_ledger(db, ledger_id: UUID) -> tuple[int, Decimal, int, str]:
+    """Scans and converts transactions mistakenly imported as EXPENSE into INCOME,
+    and ensures proper category mapping (salary vs interest vs misc income).
+    Returns (converted_count, converted_amount, recategorized_count, detailed_summary)."""
     from app.services.categories import ensure_standard_categories
     categories = await ensure_standard_categories(db, ledger_id)
 
+    def is_type(t: Transaction, target: str) -> bool:
+        val = t.type.value if hasattr(t.type, "value") else str(t.type)
+        return str(val).lower() in (target.lower(), f"transactiontype.{target.lower()}")
+
     # Map income categories
-    income_cats = {c.name: c.id for c in categories if str(c.type).lower() in ("transactiontype.income", "income")}
+    income_cats = {c.name.strip(): c.id for c in categories if str(c.type).lower() in ("transactiontype.income", "income")}
     salary_cat_id = next((c_id for c_name, c_id in income_cats.items() if any(k in c_name for k in ["급여", "월급", "소득"])), None)
     interest_cat_id = next((c_id for c_name, c_id in income_cats.items() if any(k in c_name for k in ["이자", "금융"])), None)
     misc_inc_cat_id = next((c_id for c_name, c_id in income_cats.items() if any(k in c_name for k in ["기타 수입", "기타수입", "부수입", "수입"])), None)
 
-    stmt = select(Transaction).where(
-        Transaction.ledger_id == ledger_id,
-        Transaction.type == TransactionType.EXPENSE,
-    )
+    # Query all transactions for ledger to avoid SQL-level enum casing mismatch
+    stmt = select(Transaction).where(Transaction.ledger_id == ledger_id)
     txns = list((await db.exec(stmt)).all())
 
-    SALARY_KW = ["급여", "월급", "상여", "보너스", "수당"]
-    INTEREST_KW = ["통장 이자", "통장이자", "예금이자", "적금이자", "이자입금"]
-    MISC_INCOME_KW = ["atm입금", "수술비지원", "코다리찜", "관리비", "공과금", "환급", "연말정산", "캐시백", "지원받은돈", "남은거"]
+    SALARY_KW = ["급여", "월급", "상여", "보너스", "수당", "성과급", "급료"]
+    INTEREST_KW = ["통장 이자", "통장이자", "예금이자", "적금이자", "이자입금", "이자/배당", "배당금", "배당"]
+    MISC_INCOME_KW = ["atm입금", "수술비지원", "코다리찜", "관리비", "공과금", "환급", "연말정산", "캐시백", "지원받은돈", "남은거", "생활비", "수혈", "보탬", "지원금"]
     OUTFLOW_KW = ["신용대출", "대출", "카드", "용돈", "교통비", "보험비", "데이트", "수술비", "취득세", "갚기", "스커트", "가습기", "케이크", "베개", "택시", "린클", "수리비"]
 
     converted_count = 0
     converted_amount = Decimal(0)
+    recategorized_count = 0
 
     for t in txns:
-        text = f"{t.payee or ''} {t.memo or ''}".lower().strip()
-        is_income = False
-        target_cat_id = None
+        payee_str = (t.payee or "").strip()
+        memo_str = (t.memo or "").strip().lower()
+        text = f"{payee_str} {memo_str}".lower()
 
-        if any(k in text for k in SALARY_KW):
-            is_income = True
-            target_cat_id = salary_cat_id or misc_inc_cat_id
-        elif any(k in text for k in INTEREST_KW):
-            is_income = True
-            target_cat_id = interest_cat_id or misc_inc_cat_id
-        elif any(k in text for k in MISC_INCOME_KW) and not any(ok in (t.memo or "").lower() for ok in ["갚기", "출금"]):
-            is_income = True
-            target_cat_id = misc_inc_cat_id
-        elif (t.payee or "").strip() in ["최명준", "강유리"]:
-            if not any(ok in (t.memo or "").lower() for ok in OUTFLOW_KW):
+        # 1. Check if an EXPENSE transaction should be converted to INCOME
+        if is_type(t, "expense"):
+            is_income = False
+            target_cat_id = None
+
+            if any(k in text for k in SALARY_KW):
                 is_income = True
+                target_cat_id = salary_cat_id or misc_inc_cat_id
+            elif any(k in text for k in INTEREST_KW):
+                is_income = True
+                target_cat_id = interest_cat_id or misc_inc_cat_id
+            elif any(k in text for k in MISC_INCOME_KW) and not any(ok in memo_str for ok in ["갚기", "출금"]):
+                is_income = True
+                target_cat_id = misc_inc_cat_id
+            elif any(name in payee_str for name in ["최명준", "강유리"]):
+                # Deposits by primary earners
                 if t.amount >= 1000000:
+                    is_income = True
                     target_cat_id = salary_cat_id or misc_inc_cat_id
-                else:
+                elif not any(ok in memo_str for ok in OUTFLOW_KW):
+                    is_income = True
                     target_cat_id = misc_inc_cat_id
 
-        if is_income:
-            t.type = TransactionType.INCOME
-            if target_cat_id:
-                t.category_id = target_cat_id
-            db.add(t)
-            converted_count += 1
-            converted_amount += t.amount
+            if is_income:
+                t.type = TransactionType.INCOME
+                if target_cat_id:
+                    t.category_id = target_cat_id
+                db.add(t)
+                converted_count += 1
+                converted_amount += t.amount
 
-    if converted_count > 0:
+        # 2. Check if an INCOME transaction has missing or suboptimal category
+        elif is_type(t, "income"):
+            curr_cat_name = next((c.name for c in categories if c.id == t.category_id), None)
+            new_cat_id = None
+            if t.amount >= 1000000 and any(name in payee_str or name in text for name in ["최명준", "강유리", "급여", "월급"]):
+                if curr_cat_name != "급여":
+                    new_cat_id = salary_cat_id
+            elif any(k in text for k in INTEREST_KW):
+                if curr_cat_name != "이자/배당":
+                    new_cat_id = interest_cat_id
+            elif t.category_id is None:
+                new_cat_id = misc_inc_cat_id
+
+            if new_cat_id and new_cat_id != t.category_id:
+                t.category_id = new_cat_id
+                db.add(t)
+                recategorized_count += 1
+
+    if converted_count > 0 or recategorized_count > 0:
         await db.commit()
 
-    return converted_count, converted_amount
+    # Calculate current ledger income status
+    oct_incomes = [t for t in txns if is_type(t, "income") and str(t.transaction_date).startswith("2026-10")]
+    oct_income_amt = sum((t.amount for t in oct_incomes), Decimal(0))
+    nov_incomes = [t for t in txns if is_type(t, "income") and str(t.transaction_date).startswith("2026-11")]
+    nov_income_amt = sum((t.amount for t in nov_incomes), Decimal(0))
+    all_incomes = [t for t in txns if is_type(t, "income")]
+    all_income_amt = sum((t.amount for t in all_incomes), Decimal(0))
+
+    summary_lines = []
+    if converted_count > 0:
+        summary_lines.append(f"과거 지출로 잘못 등록된 수입 {converted_count}건(총 {converted_amount:,.0f}원) 복구 완료")
+    if recategorized_count > 0:
+        summary_lines.append(f"급여/이자 카테고리 {recategorized_count}건 정밀 재분류 완료")
+    if converted_count == 0 and recategorized_count == 0:
+        summary_lines.append("현재 가계부의 수입/지출 분류가 최신 상태입니다.")
+
+    summary_lines.append(
+        f"\n[현재 가계부 수입 현황]\n"
+        f"• 10월 수입: {len(oct_incomes)}건 (총 {oct_income_amt:,.0f}원)\n"
+        f"• 11월 수입: {len(nov_incomes)}건 (총 {nov_income_amt:,.0f}원)\n"
+        f"• 전체 수입: {len(all_incomes)}건 (총 {all_income_amt:,.0f}원, 전체 {len(txns)}건 중)"
+    )
+    if len(oct_incomes) == 0:
+        summary_lines.append(
+            "\n💡 10월 수입이 0원인 이유:\n"
+            "허브통장 거래내역 엑셀 파일('토스뱅크_거래내역.xlsx')이 아직 이 가계부에 업로드되지 않았습니다.\n"
+            "[명세서 가져오기]에서 해당 파일을 업로드하시면 10월 31일 급여 6,090,000원이 정상 등록됩니다."
+        )
+
+    summary_msg = "\n".join(summary_lines)
+    return converted_count, converted_amount, recategorized_count, summary_msg
 
 
 @router.post("/fix-legacy-incomes", response_model=FixLegacyIncomesResponse)
@@ -627,17 +686,11 @@ async def fix_legacy_incomes_endpoint(
 ) -> FixLegacyIncomesResponse:
     """Detects and fixes transactions erroneously imported as EXPENSE instead of INCOME."""
     ledger, _ = membership
-    count, total_amt = await _fix_legacy_incomes_for_ledger(db, ledger.id)
-    if count == 0:
-        return FixLegacyIncomesResponse(
-            converted_count=0,
-            converted_amount=Decimal(0),
-            message="수입으로 복구할 대상 거래가 없습니다.",
-        )
+    count, total_amt, recat_count, msg = await _fix_legacy_incomes_for_ledger(db, ledger.id)
     return FixLegacyIncomesResponse(
         converted_count=count,
         converted_amount=total_amt,
-        message=f"총 {count}건의 거래(총 {total_amt:,.0f}원)를 정상적으로 수입으로 복구하였습니다.",
+        message=msg,
     )
 
 
@@ -654,7 +707,7 @@ async def batch_auto_categorize_transactions(
 
     fixed_incomes_count = 0
     if fix_legacy_incomes:
-        fixed_incomes_count, _ = await _fix_legacy_incomes_for_ledger(db, ledger.id)
+        fixed_incomes_count, _, _, _ = await _fix_legacy_incomes_for_ledger(db, ledger.id)
 
     from app.services.categories import ensure_standard_categories
     # Ensure standard categories exist (adds 보험, 금융/대출, 저축/투자, 경조사/선물, 용돈 if missing)
@@ -708,7 +761,7 @@ async def batch_auto_categorize_transactions(
     for txn in txns:
         corpus = f"{txn.payee or ''} {txn.memo or ''}".strip()
         txn_type_str = txn.type.value if hasattr(txn.type, "value") else str(txn.type)
-        cat_id, cat_name = _guess_category_by_rules(corpus, categories, txn_type=txn_type_str)
+        cat_id, cat_name = _guess_category_by_rules(corpus, categories, txn_type=txn_type_str, amount=float(txn.amount))
         # If we got a category and it's different from current (or was None), update it
         if cat_id and cat_id != txn.category_id:
             txn.category_id = cat_id

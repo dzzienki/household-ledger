@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
+import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, G, Path, Rect } from 'react-native-svg';
 
 import { formatCurrency } from '@/lib/format';
@@ -10,7 +10,17 @@ export interface MonthlyDatum {
   expense: number;
 }
 
-export function MonthlyBarChart({ data, currency = 'KRW' }: { data: MonthlyDatum[]; currency?: string }) {
+export function MonthlyBarChart({
+  data,
+  currency = 'KRW',
+  selectedMonth,
+  onSelectMonth,
+}: {
+  data: MonthlyDatum[];
+  currency?: string;
+  selectedMonth?: number | null;
+  onSelectMonth?: (month: number) => void;
+}) {
   const [width, setWidth] = useState(0);
   const height = 200;
   const padding = { top: 16, right: 8, bottom: 28, left: 8 };
@@ -39,8 +49,20 @@ export function MonthlyBarChart({ data, currency = 'KRW' }: { data: MonthlyDatum
             const expenseH = (d.expense / max) * chartH;
             const incomeX = groupX + groupWidth / 2 - barWidth - 1;
             const expenseX = groupX + groupWidth / 2 + 1;
+            const isSelected = selectedMonth === d.month;
             return (
               <G key={d.month}>
+                {isSelected && (
+                  <Rect
+                    x={groupX + 1}
+                    y={padding.top}
+                    width={Math.max(1, groupWidth - 2)}
+                    height={chartH}
+                    rx={4}
+                    fill="#3B82F6"
+                    fillOpacity={0.14}
+                  />
+                )}
                 <Rect
                   x={incomeX}
                   y={padding.top + chartH - incomeH}
@@ -63,11 +85,21 @@ export function MonthlyBarChart({ data, currency = 'KRW' }: { data: MonthlyDatum
         </Svg>
       )}
       <View style={[styles.labels, { paddingHorizontal: padding.left }]}>
-        {data.map((d) => (
-          <Text key={d.month} style={[styles.label, { width: groupWidth }]}>
-            {d.month}
-          </Text>
-        ))}
+        {data.map((d) => {
+          const isSelected = selectedMonth === d.month;
+          return (
+            <Pressable
+              key={d.month}
+              onPress={() => onSelectMonth?.(d.month)}
+              style={[styles.labelBtn, { width: groupWidth }, isSelected && styles.labelBtnActive]}
+              hitSlop={4}
+            >
+              <Text style={[styles.label, isSelected && styles.labelActive]}>
+                {d.month}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
       <View style={styles.legend}>
         <LegendDot color="#22C55E" label="수입" />
@@ -231,7 +263,10 @@ function donutPath(
 const styles = StyleSheet.create({
   container: { backgroundColor: '#fff', paddingVertical: 8 },
   labels: { flexDirection: 'row', marginTop: 4 },
+  labelBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: 2, borderRadius: 4 },
+  labelBtnActive: { backgroundColor: '#3B82F6' },
   label: { textAlign: 'center', fontSize: 11, color: '#6B7280' },
+  labelActive: { color: '#ffffff', fontWeight: '700' },
   legend: { flexDirection: 'row', justifyContent: 'center', gap: 16, marginTop: 8 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },

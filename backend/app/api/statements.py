@@ -82,7 +82,12 @@ async def parse_statement(
             ).all()
         )
         existing_signatures = {
-            (t.transaction_date, (t.payee or "").strip(), Decimal(str(t.amount)), t.type)
+            (
+                t.transaction_date,
+                (t.payee or "").strip(),
+                Decimal(str(t.amount)),
+                str(t.type.value if hasattr(t.type, "value") else t.type).lower(),
+            )
             for t in existing_txns
         }
     else:
@@ -93,7 +98,7 @@ async def parse_statement(
         t_date = datetime.strptime(it.transaction_date, "%Y-%m-%d").date()
         t_amt = Decimal(str(round(it.amount, 2)))
         txn_type = TransactionType.INCOME if it.type == "income" else TransactionType.EXPENSE
-        sig = (t_date, it.payee.strip(), t_amt, txn_type)
+        sig = (t_date, it.payee.strip(), t_amt, str(txn_type.value).lower())
         is_dup = sig in existing_signatures
 
         items.append(

@@ -203,6 +203,7 @@ def _guess_category_by_rules(
     payee: str,
     categories: list[Category],
     txn_type: str = "expense",
+    amount: float | None = None,
 ) -> tuple[UUID | None, str | None]:
     p = str(payee or "").lower()
     txn_type_str = str(txn_type).lower()
@@ -213,6 +214,13 @@ def _guess_category_by_rules(
             for c in categories
             if str(c.type).lower() in ("transactiontype.income", "income")
         }
+        # If large deposit by primary earners (>= 1,000,000), prioritize salary category
+        if amount is not None and amount >= 1000000 and any(kw in p for kw in ["최명준", "강유리"]):
+            for s_cat in ["급여", "월급", "소득"]:
+                for c_name, c_id in income_cats.items():
+                    if s_cat in c_name or c_name in s_cat:
+                        return c_id, c_name
+
         income_rules = [
             (["급여", "월급", "상여", "보너스", "수당"], ["급여", "월급", "소득"]),
             (["통장 이자", "통장이자", "예금이자", "적금이자", "이자/배당", "배당", "이자"], ["이자/배당", "이자", "금융수입", "기타수입", "기타 수입"]),
@@ -444,7 +452,7 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
         memo_str = " | ".join(memos) if memos else None
 
         search_corpus = f"{clean_payee} {user_memo} {raw_payee}"
-        cat_id, cat_name = _guess_category_by_rules(search_corpus, categories, txn_type=txn_type)
+        cat_id, cat_name = _guess_category_by_rules(search_corpus, categories, txn_type=txn_type, amount=final_amount)
 
         items.append(
             ParsedStatementItem(
