@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -35,6 +35,11 @@ from app.schemas.transaction import (
     TransactionUpdate,
 )
 from app.schemas.transaction_item import TransactionItemCreate, TransactionItemPublic
+from app.services.ledger_cleanup import (
+    find_internal_transfer_pairs,
+    infer_types_from_balance,
+    ledger_member_names,
+)
 from app.services.recurring import materialize_due_for_ledger
 
 router = APIRouter(prefix="/ledgers/{ledger_id}/transactions", tags=["transactions"])
@@ -306,186 +311,31 @@ async def bulk_delete_transactions(
     return BulkDeleteResponse(deleted_count=count, message=msg)
 
 
-INTERNAL_OUTFLOW_KEYWORDS = ["(모임통장)", "모임통장", "허브통장", "내계좌간", "자동이체", "송금", "출금"]
-INTERNAL_INFLOW_KEYWORDS = ["생활비", "공과금", "수혈", "입금", "식비생활비", "보탬", "수급", "전환", "남은거"]
-GENERAL_INTERNAL_KEYWORDS = [
-    "모임통장", "허브", "생활비", "공과금", "수혈", "최명준", "강유리",
-    "관리비통장", "내계좌", "자동이체", "송금", "이체", "급여", "월급", "보탬", "모은돈", "식비생활비등"
-]
-
-EXTERNAL_MERCHANT_KEYWORDS = [
-    "스타벅스", "이디야", "투썸", "메가mgc", "빽다방", "컴포즈", "커피", "카페", "베이커리",
-    "식당", "음식점", "치킨", "버거", "맥도날드", "피자", "배달의민족", "요기요", "쿠팡이츠",
-    "이마트", "홈플러스", "롯데마트", "지에스25", "gs25", "씨유", "cu", "세븐일레븐", "마트", "쿠팡",
-    "약국", "병원", "의원", "치과", "내과", "cgv", "롯데시네마", "메가박스", "올리브영", "다이소"
-]
-
-
-async def _find_internal_transfer_pairs_for_ledger(
-    db: AsyncSession, ledger_id: UUID
-) -> list[dict[str, Any]]:
-    """Detects 1:1 matching internal transfers (e.g. hub account -> living/utility accounts) on the same date with exact amount."""
-    stmt = (
-        select(Transaction)
-        .where(Transaction.ledger_id == ledger_id)
-        .order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc())
+def _transfer_item(t: Transaction) -> InternalTransferItem:
+    return InternalTransferItem(
+        id=t.id,
+        type=t.type,
+        amount=t.amount,
+        transaction_date=t.transaction_date,
+        payee=t.payee,
+        memo=t.memo,
     )
-    txns = list((await db.exec(stmt)).all())
 
-    matched_ids: set[UUID] = set()
-    pairs: list[dict[str, Any]] = []
 
-    def is_type(t: Transaction, t_type: str) -> bool:
-        val = t.type.value if hasattr(t.type, "value") else str(t.type)
-        return str(val).lower() == t_type.lower()
-
-    # Pass 1: Standard Expense vs Income matching
-    expenses = [t for t in txns if is_type(t, "expense")]
-    incomes = [t for t in txns if is_type(t, "income")]
-
-    for exp in expenses:
-        if exp.id in matched_ids:
-            continue
-        exp_text = f"{exp.payee or ''} {exp.memo or ''}".lower().strip()
-        if any(ek in exp_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
-            continue
-
-        for inc in incomes:
-            if inc.id in matched_ids:
-                continue
-            if exp.transaction_date == inc.transaction_date and exp.amount == inc.amount:
-                inc_text = f"{inc.payee or ''} {inc.memo or ''}".lower().strip()
-                if any(ek in inc_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
-                    continue
-
-                if any(k in exp_text for k in GENERAL_INTERNAL_KEYWORDS) or any(k in inc_text for k in GENERAL_INTERNAL_KEYWORDS):
-                    matched_ids.add(exp.id)
-                    matched_ids.add(inc.id)
-                    desc = f"{exp.payee or '출금'} ➔ {inc.payee or '입금'}"
-                    pairs.append({
-                        "pair_id": f"{exp.id}_{inc.id}",
-                        "date": exp.transaction_date,
-                        "amount": exp.amount,
-                        "description": desc,
-                        "expense_txn": InternalTransferItem(
-                            id=exp.id,
-                            type=exp.type,
-                            amount=exp.amount,
-                            transaction_date=exp.transaction_date,
-                            payee=exp.payee,
-                            memo=exp.memo,
-                        ),
-                        "income_txn": InternalTransferItem(
-                            id=inc.id,
-                            type=inc.type,
-                            amount=inc.amount,
-                            transaction_date=inc.transaction_date,
-                            payee=inc.payee,
-                            memo=inc.memo,
-                        ),
-                    })
-                    break
-
-    # Pass 2: Legacy both-as-expense matching (handles statements imported before parser deposit fix)
-    unmatched = [t for t in txns if t.id not in matched_ids]
-    inflow_candidates: list[Transaction] = []
-    outflow_candidates: list[Transaction] = []
-    for t in unmatched:
-        t_text = f"{t.payee or ''} {t.memo or ''}".lower().strip()
-        if any(ek in t_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
-            continue
-        if any(ik in t_text for ik in INTERNAL_INFLOW_KEYWORDS):
-            inflow_candidates.append(t)
-        elif any(ok in t_text for ok in INTERNAL_OUTFLOW_KEYWORDS) or any(gk in t_text for gk in GENERAL_INTERNAL_KEYWORDS):
-            outflow_candidates.append(t)
-
-    for out_t in outflow_candidates:
-        if out_t.id in matched_ids:
-            continue
-        out_text = f"{out_t.payee or ''} {out_t.memo or ''}".lower().strip()
-
-        for in_t in inflow_candidates:
-            if in_t.id in matched_ids:
-                continue
-            if out_t.id == in_t.id:
-                continue
-            if out_t.transaction_date == in_t.transaction_date and out_t.amount == in_t.amount:
-                matched_ids.add(out_t.id)
-                matched_ids.add(in_t.id)
-                desc = f"{out_t.payee or '출금'} ➔ {in_t.payee or '입금'}"
-                pairs.append({
-                    "pair_id": f"{out_t.id}_{in_t.id}",
-                    "date": out_t.transaction_date,
-                    "amount": out_t.amount,
-                    "description": desc,
-                    "expense_txn": InternalTransferItem(
-                        id=out_t.id,
-                        type=out_t.type,
-                        amount=out_t.amount,
-                        transaction_date=out_t.transaction_date,
-                        payee=out_t.payee,
-                        memo=out_t.memo,
-                    ),
-                    "income_txn": InternalTransferItem(
-                        id=in_t.id,
-                        type=in_t.type,
-                        amount=in_t.amount,
-                        transaction_date=in_t.transaction_date,
-                        payee=in_t.payee,
-                        memo=in_t.memo,
-                    ),
-                })
-                break
-
-    # Pass 3: General internal keyword pairs on same date and same amount
-    remaining_unmatched = [t for t in unmatched if t.id not in matched_ids]
-    for i, t1 in enumerate(remaining_unmatched):
-        if t1.id in matched_ids:
-            continue
-        t1_text = f"{t1.payee or ''} {t1.memo or ''}".lower().strip()
-        if any(ek in t1_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
-            continue
-        if not any(k in t1_text for k in GENERAL_INTERNAL_KEYWORDS):
-            continue
-
-        for j, t2 in enumerate(remaining_unmatched):
-            if i >= j or t2.id in matched_ids:
-                continue
-            t2_text = f"{t2.payee or ''} {t2.memo or ''}".lower().strip()
-            if any(ek in t2_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
-                continue
-            if not any(k in t2_text for k in GENERAL_INTERNAL_KEYWORDS):
-                continue
-
-            if t1.transaction_date == t2.transaction_date and t1.amount == t2.amount:
-                matched_ids.add(t1.id)
-                matched_ids.add(t2.id)
-                desc = f"{t1.payee or '이체1'} ⇄ {t2.payee or '이체2'}"
-                pairs.append({
-                    "pair_id": f"{t1.id}_{t2.id}",
-                    "date": t1.transaction_date,
-                    "amount": t1.amount,
-                    "description": desc,
-                    "expense_txn": InternalTransferItem(
-                        id=t1.id,
-                        type=t1.type,
-                        amount=t1.amount,
-                        transaction_date=t1.transaction_date,
-                        payee=t1.payee,
-                        memo=t1.memo,
-                    ),
-                    "income_txn": InternalTransferItem(
-                        id=t2.id,
-                        type=t2.type,
-                        amount=t2.amount,
-                        transaction_date=t2.transaction_date,
-                        payee=t2.payee,
-                        memo=t2.memo,
-                    ),
-                })
-                break
-
-    return pairs
+async def _detect_transfer_pairs(db: AsyncSession, ledger_id: UUID) -> list[InternalTransferPair]:
+    txns = list((await db.exec(select(Transaction).where(Transaction.ledger_id == ledger_id))).all())
+    members = await ledger_member_names(db, ledger_id, txns)
+    return [
+        InternalTransferPair(
+            pair_id=f"{p.expense.id}_{p.income.id}",
+            date=p.expense.transaction_date,
+            amount=p.expense.amount,
+            description=f"{p.expense.payee or '출금'} ➔ {p.income.payee or '입금'}",
+            expense_txn=_transfer_item(p.expense),
+            income_txn=_transfer_item(p.income),
+        )
+        for p in find_internal_transfer_pairs(txns, members)
+    ]
 
 
 @router.get("/internal-transfers", response_model=InternalTransferListResponse)
@@ -493,15 +343,13 @@ async def list_internal_transfer_pairs(
     db: DbDep,
     membership: Annotated[tuple[Ledger, LedgerMember], Depends(get_ledger_membership)],
 ) -> InternalTransferListResponse:
-    """Lists detected internal family / inter-account transfer duplicates."""
+    """Lists money moved between the household's own accounts (counted once as expense, once as income)."""
     ledger, _ = membership
-    pairs_data = await _find_internal_transfer_pairs_for_ledger(db, ledger.id)
-    pairs = [InternalTransferPair(**p) for p in pairs_data]
-    total_amount = sum((p.amount for p in pairs), Decimal(0))
+    pairs = await _detect_transfer_pairs(db, ledger.id)
     return InternalTransferListResponse(
         pairs=pairs,
         total_count=len(pairs),
-        total_amount=total_amount,
+        total_amount=sum((p.amount for p in pairs), Decimal(0)),
     )
 
 
@@ -511,32 +359,23 @@ async def resolve_internal_transfer_pairs(
     db: DbDep,
     membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
 ) -> InternalTransferResolveResponse:
-    """Resolves (deletes) duplicate inter-account transfer transactions to clean up double counting."""
+    """Deletes both sides of detected internal transfers so they stop inflating income and expense."""
     ledger, _ = membership
-    pairs_data = await _find_internal_transfer_pairs_for_ledger(db, ledger.id)
+    pairs = await _detect_transfer_pairs(db, ledger.id)
 
     txn_ids_to_delete: set[UUID] = set()
-
-    if payload.delete_all_detected:
-        for p in pairs_data:
-            txn_ids_to_delete.add(p["expense_txn"].id)
-            txn_ids_to_delete.add(p["income_txn"].id)
-    else:
-        if payload.pair_ids:
-            pair_set = set(payload.pair_ids)
-            for p in pairs_data:
-                if p["pair_id"] in pair_set:
-                    txn_ids_to_delete.add(p["expense_txn"].id)
-                    txn_ids_to_delete.add(p["income_txn"].id)
-        if payload.transaction_ids:
-            for tid in payload.transaction_ids:
-                txn_ids_to_delete.add(tid)
+    wanted = set(payload.pair_ids or [])
+    for p in pairs:
+        if payload.delete_all_detected or p.pair_id in wanted:
+            txn_ids_to_delete.update((p.expense_txn.id, p.income_txn.id))
+    if not payload.delete_all_detected and payload.transaction_ids:
+        txn_ids_to_delete.update(payload.transaction_ids)
 
     if not txn_ids_to_delete:
         return InternalTransferResolveResponse(
             deleted_count=0,
             freed_amount=Decimal(0),
-            message="제거할 중복 이체 거래가 없습니다.",
+            message="제거할 내부 이체 거래가 없습니다.",
         )
 
     stmt = select(Transaction).where(
@@ -544,139 +383,60 @@ async def resolve_internal_transfer_pairs(
         Transaction.id.in_(txn_ids_to_delete),
     )
     txns_to_delete = list((await db.exec(stmt)).all())
-    deleted_count = len(txns_to_delete)
-    total_freed = sum((t.amount for t in txns_to_delete), Decimal(0))
-
-    # Also delete associated items / tags if any
     for t in txns_to_delete:
         await db.delete(t)
     await db.commit()
 
+    pair_count = len(txns_to_delete) // 2
+    pair_amount = sum((t.amount for t in txns_to_delete if t.type == TransactionType.EXPENSE), Decimal(0))
     return InternalTransferResolveResponse(
-        deleted_count=deleted_count,
-        freed_amount=total_freed,
-        message=f"총 {deleted_count}건의 내부 이체 중복 거래(총 {total_freed:,.0f}원)를 성공적으로 정리했습니다.",
+        deleted_count=len(txns_to_delete),
+        freed_amount=pair_amount,
+        message=(
+            f"내부 이체 {pair_count}쌍({len(txns_to_delete)}건)을 정리했습니다. "
+            f"수입과 지출에서 각각 {pair_amount:,.0f}원의 중복 집계가 제거되었습니다."
+        ),
     )
 
 
-async def _fix_legacy_incomes_for_ledger(db, ledger_id: UUID) -> tuple[int, Decimal, int, str]:
-    """Scans and converts transactions mistakenly imported as EXPENSE into INCOME,
-    and ensures proper category mapping (salary vs interest vs misc income).
-    Returns (converted_count, converted_amount, recategorized_count, detailed_summary)."""
-    from app.services.categories import ensure_standard_categories
-    categories = await ensure_standard_categories(db, ledger_id)
+async def _repair_types_from_balance(
+    db: AsyncSession, ledger_id: UUID, categories: list[Category], members: set[str]
+) -> tuple[int, int, Decimal]:
+    """Fixes income/expense direction of statement imports using their 잔액 balance chain.
 
-    def is_type(t: Transaction, target: str) -> bool:
-        val = t.type.value if hasattr(t.type, "value") else str(t.type)
-        return str(val).lower() in (target.lower(), f"transactiontype.{target.lower()}")
+    Returns (to_income_count, to_expense_count, moved_amount). A flipped transaction's old
+    category belongs to the wrong type, so it is re-guessed (or cleared).
+    """
+    from app.services.statement_parser import _guess_category_by_rules
 
-    # Map income categories
-    income_cats = {c.name.strip(): c.id for c in categories if str(c.type).lower() in ("transactiontype.income", "income")}
-    salary_cat_id = next((c_id for c_name, c_id in income_cats.items() if any(k in c_name for k in ["급여", "월급", "소득"])), None)
-    interest_cat_id = next((c_id for c_name, c_id in income_cats.items() if any(k in c_name for k in ["이자", "금융"])), None)
-    misc_inc_cat_id = next((c_id for c_name, c_id in income_cats.items() if any(k in c_name for k in ["기타 수입", "기타수입", "부수입", "수입"])), None)
+    txns = list((await db.exec(select(Transaction).where(Transaction.ledger_id == ledger_id))).all())
+    inferred = infer_types_from_balance(txns)
 
-    # Query all transactions for ledger to avoid SQL-level enum casing mismatch
-    stmt = select(Transaction).where(Transaction.ledger_id == ledger_id)
-    txns = list((await db.exec(stmt)).all())
-
-    SALARY_KW = ["급여", "월급", "상여", "보너스", "수당", "성과급", "급료"]
-    INTEREST_KW = ["통장 이자", "통장이자", "예금이자", "적금이자", "이자입금", "이자/배당", "배당금", "배당"]
-    MISC_INCOME_KW = ["atm입금", "수술비지원", "코다리찜", "관리비", "공과금", "환급", "연말정산", "캐시백", "지원받은돈", "남은거", "생활비", "수혈", "보탬", "지원금"]
-    OUTFLOW_KW = ["신용대출", "대출", "카드", "용돈", "교통비", "보험비", "데이트", "수술비", "취득세", "갚기", "스커트", "가습기", "케이크", "베개", "택시", "린클", "수리비"]
-
-    converted_count = 0
-    converted_amount = Decimal(0)
-    recategorized_count = 0
-
+    to_income = to_expense = 0
+    moved = Decimal(0)
     for t in txns:
-        payee_str = (t.payee or "").strip()
-        memo_str = (t.memo or "").strip().lower()
-        text = f"{payee_str} {memo_str}".lower()
-
-        # 1. Check if an EXPENSE transaction should be converted to INCOME
-        if is_type(t, "expense"):
-            is_income = False
-            target_cat_id = None
-
-            if any(k in text for k in SALARY_KW):
-                is_income = True
-                target_cat_id = salary_cat_id or misc_inc_cat_id
-            elif any(k in text for k in INTEREST_KW):
-                is_income = True
-                target_cat_id = interest_cat_id or misc_inc_cat_id
-            elif any(k in text for k in MISC_INCOME_KW) and not any(ok in memo_str for ok in ["갚기", "출금"]):
-                is_income = True
-                target_cat_id = misc_inc_cat_id
-            elif any(name in payee_str for name in ["최명준", "강유리"]):
-                # Deposits by primary earners
-                if t.amount >= 1000000:
-                    is_income = True
-                    target_cat_id = salary_cat_id or misc_inc_cat_id
-                elif not any(ok in memo_str for ok in OUTFLOW_KW):
-                    is_income = True
-                    target_cat_id = misc_inc_cat_id
-
-            if is_income:
-                t.type = TransactionType.INCOME
-                if target_cat_id:
-                    t.category_id = target_cat_id
-                db.add(t)
-                converted_count += 1
-                converted_amount += t.amount
-
-        # 2. Check if an INCOME transaction has missing or suboptimal category
-        elif is_type(t, "income"):
-            curr_cat_name = next((c.name for c in categories if c.id == t.category_id), None)
-            new_cat_id = None
-            if t.amount >= 1000000 and any(name in payee_str or name in text for name in ["최명준", "강유리", "급여", "월급"]):
-                if curr_cat_name != "급여":
-                    new_cat_id = salary_cat_id
-            elif any(k in text for k in INTEREST_KW):
-                if curr_cat_name != "이자/배당":
-                    new_cat_id = interest_cat_id
-            elif t.category_id is None:
-                new_cat_id = misc_inc_cat_id
-
-            if new_cat_id and new_cat_id != t.category_id:
-                t.category_id = new_cat_id
-                db.add(t)
-                recategorized_count += 1
-
-    if converted_count > 0 or recategorized_count > 0:
-        await db.commit()
-
-    # Calculate current ledger income status
-    oct_incomes = [t for t in txns if is_type(t, "income") and str(t.transaction_date).startswith("2026-10")]
-    oct_income_amt = sum((t.amount for t in oct_incomes), Decimal(0))
-    nov_incomes = [t for t in txns if is_type(t, "income") and str(t.transaction_date).startswith("2026-11")]
-    nov_income_amt = sum((t.amount for t in nov_incomes), Decimal(0))
-    all_incomes = [t for t in txns if is_type(t, "income")]
-    all_income_amt = sum((t.amount for t in all_incomes), Decimal(0))
-
-    summary_lines = []
-    if converted_count > 0:
-        summary_lines.append(f"과거 지출로 잘못 등록된 수입 {converted_count}건(총 {converted_amount:,.0f}원) 복구 완료")
-    if recategorized_count > 0:
-        summary_lines.append(f"급여/이자 카테고리 {recategorized_count}건 정밀 재분류 완료")
-    if converted_count == 0 and recategorized_count == 0:
-        summary_lines.append("현재 가계부의 수입/지출 분류가 최신 상태입니다.")
-
-    summary_lines.append(
-        f"\n[현재 가계부 수입 현황]\n"
-        f"• 10월 수입: {len(oct_incomes)}건 (총 {oct_income_amt:,.0f}원)\n"
-        f"• 11월 수입: {len(nov_incomes)}건 (총 {nov_income_amt:,.0f}원)\n"
-        f"• 전체 수입: {len(all_incomes)}건 (총 {all_income_amt:,.0f}원, 전체 {len(txns)}건 중)"
-    )
-    if len(oct_incomes) == 0:
-        summary_lines.append(
-            "\n💡 10월 수입이 0원인 이유:\n"
-            "허브통장 거래내역 엑셀 파일('토스뱅크_거래내역.xlsx')이 아직 이 가계부에 업로드되지 않았습니다.\n"
-            "[명세서 가져오기]에서 해당 파일을 업로드하시면 10월 31일 급여 6,090,000원이 정상 등록됩니다."
+        true_type = inferred.get(t.id)
+        if true_type is None or true_type == t.type:
+            continue
+        t.type = true_type
+        cat_id, _ = _guess_category_by_rules(
+            f"{t.payee or ''} {t.memo or ''}",
+            categories,
+            txn_type=true_type.value,
+            amount=float(t.amount),
+            member_names=members,
         )
+        t.category_id = cat_id
+        db.add(t)
+        moved += t.amount
+        if true_type == TransactionType.INCOME:
+            to_income += 1
+        else:
+            to_expense += 1
 
-    summary_msg = "\n".join(summary_lines)
-    return converted_count, converted_amount, recategorized_count, summary_msg
+    if to_income or to_expense:
+        await db.commit()
+    return to_income, to_expense, moved
 
 
 @router.post("/fix-legacy-incomes", response_model=FixLegacyIncomesResponse)
@@ -684,14 +444,25 @@ async def fix_legacy_incomes_endpoint(
     db: DbDep,
     membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
 ) -> FixLegacyIncomesResponse:
-    """Detects and fixes transactions erroneously imported as EXPENSE instead of INCOME."""
+    """Repairs income/expense direction of imported bank statement rows from their balance history."""
+    from app.services.categories import ensure_standard_categories
+
     ledger, _ = membership
-    count, total_amt, recat_count, msg = await _fix_legacy_incomes_for_ledger(db, ledger.id)
-    return FixLegacyIncomesResponse(
-        converted_count=count,
-        converted_amount=total_amt,
-        message=msg,
-    )
+    categories = await ensure_standard_categories(db, ledger.id)
+    txns = list((await db.exec(select(Transaction).where(Transaction.ledger_id == ledger.id))).all())
+    members = await ledger_member_names(db, ledger.id, txns)
+    to_income, to_expense, moved = await _repair_types_from_balance(db, ledger.id, categories, members)
+
+    if to_income or to_expense:
+        msg = (
+            f"잔액 기록으로 입출금 방향을 검증해 {to_income + to_expense}건을 바로잡았습니다.\n"
+            f"• 지출 → 수입: {to_income}건\n"
+            f"• 수입 → 지출: {to_expense}건\n"
+            "방향이 바뀐 거래는 카테고리를 다시 지정했습니다. 남은 미분류 거래는 '자동 분류'로 정리하세요."
+        )
+    else:
+        msg = "잔액 기록과 비교한 결과 모든 거래의 수입/지출 방향이 올바릅니다."
+    return FixLegacyIncomesResponse(converted_count=to_income + to_expense, converted_amount=moved, message=msg)
 
 
 @router.post("/batch-categorize", response_model=BatchCategorizeResponse)
@@ -700,47 +471,61 @@ async def batch_auto_categorize_transactions(
     membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
     force_all: bool = Query(default=False, description="Re-evaluate all transactions even if already categorized"),
     reclassify_misc: bool = Query(default=True, description="Also re-evaluate transactions currently in 기타 지출 / 기타 수입 to refine them"),
-    deduplicate_transfers: bool = Query(default=False, description="Automatically remove exact inter-account transfer duplicate transactions"),
-    fix_legacy_incomes: bool = Query(default=True, description="Convert legacy statement transactions that were erroneously marked as EXPENSE into INCOME"),
+    deduplicate_transfers: bool = Query(default=False, description="Automatically remove detected internal transfer pairs"),
+    repair_types: bool = Query(default=True, description="Fix income/expense direction from the statement balance history first"),
 ) -> BatchCategorizeResponse:
-    ledger, _ = membership
-
-    fixed_incomes_count = 0
-    if fix_legacy_incomes:
-        fixed_incomes_count, _, _, _ = await _fix_legacy_incomes_for_ledger(db, ledger.id)
-
+    from app.services.ai import is_ai_enabled, suggest_categories_batch
     from app.services.categories import ensure_standard_categories
+    from app.services.statement_parser import _guess_category_by_rules
+
+    ledger, _ = membership
     # Ensure standard categories exist (adds 보험, 금융/대출, 저축/투자, 경조사/선물, 용돈 if missing)
     categories = await ensure_standard_categories(db, ledger.id)
+    cat_by_id = {c.id: c for c in categories}
+    all_txns = list((await db.exec(select(Transaction).where(Transaction.ledger_id == ledger.id))).all())
+    members = await ledger_member_names(db, ledger.id, all_txns)
+
+    repaired_count = 0
+    if repair_types:
+        to_income, to_expense, _ = await _repair_types_from_balance(db, ledger.id, categories, members)
+        repaired_count = to_income + to_expense
 
     removed_transfers_count = 0
     if deduplicate_transfers:
-        pairs = await _find_internal_transfer_pairs_for_ledger(db, ledger.id)
-        if pairs:
-            tids = [p["expense_txn"].id for p in pairs] + [p["income_txn"].id for p in pairs]
+        pairs = await _detect_transfer_pairs(db, ledger.id)
+        tids = [p.expense_txn.id for p in pairs] + [p.income_txn.id for p in pairs]
+        if tids:
             del_stmt = select(Transaction).where(Transaction.ledger_id == ledger.id, Transaction.id.in_(tids))
-            to_del = list((await db.exec(del_stmt)).all())
-            for t in to_del:
+            for t in (await db.exec(del_stmt)).all():
                 await db.delete(t)
+                removed_transfers_count += 1
             await db.commit()
-            removed_transfers_count = len(to_del)
 
-    # Identify misc category IDs if reclassify_misc is True
-    misc_cat_ids = [c.id for c in categories if c.name in ("기타 지출", "기타 수입", "기타")]
+    misc_cat_ids = {c.id for c in categories if c.name in ("기타 지출", "기타 수입", "기타")}
 
-    stmt = select(Transaction).where(Transaction.ledger_id == ledger.id)
-    if not force_all:
-        if reclassify_misc and misc_cat_ids:
-            stmt = stmt.where((Transaction.category_id.is_(None)) | (Transaction.category_id.in_(misc_cat_ids)))
-        else:
-            stmt = stmt.where(Transaction.category_id.is_(None))
+    def needs_review(t: Transaction) -> bool:
+        cat = cat_by_id.get(t.category_id) if t.category_id else None
+        if cat is None or cat.type != t.type:
+            return True
+        return force_all or (reclassify_misc and t.category_id in misc_cat_ids)
 
-    txns = list((await db.exec(stmt)).all())
+    txns = [
+        t
+        for t in (await db.exec(select(Transaction).where(Transaction.ledger_id == ledger.id))).all()
+        if needs_review(t)
+    ]
     total_processed = len(txns)
+
+    extra_parts: list[str] = []
+    if repaired_count:
+        extra_parts.append(f"입출금 방향 {repaired_count}건 교정")
+    if removed_transfers_count:
+        extra_parts.append(f"내부 이체 {removed_transfers_count}건 정리")
+
     if total_processed == 0:
-        msg = f"분류할 대상 거래가 없습니다.{f' (내부 이체 중복 {removed_transfers_count}건 정리 완료)' if removed_transfers_count > 0 else ''}"
-        if fixed_incomes_count > 0:
-            msg += f" (과거 수입 거래 {fixed_incomes_count}건 정상 복구 완료)"
+        msg = "분류할 대상 거래가 없습니다."
+        if extra_parts:
+            msg += f" ({', '.join(extra_parts)})"
         return BatchCategorizeResponse(
             total_processed=0,
             categorized_count=0,
@@ -753,26 +538,30 @@ async def batch_auto_categorize_transactions(
 
     rules_count = 0
     ai_count = 0
-    from app.services.ai import is_ai_enabled, suggest_categories_batch
-    from app.services.statement_parser import _guess_category_by_rules
 
-    # Phase 1: High-speed rule-based classification (all in-memory regex/substring, < 0.05s)
+    # Phase 1: High-speed rule-based classification (in-memory keyword matching)
     remaining_txns: list[Transaction] = []
     for txn in txns:
         corpus = f"{txn.payee or ''} {txn.memo or ''}".strip()
-        txn_type_str = txn.type.value if hasattr(txn.type, "value") else str(txn.type)
-        cat_id, cat_name = _guess_category_by_rules(corpus, categories, txn_type=txn_type_str, amount=float(txn.amount))
-        # If we got a category and it's different from current (or was None), update it
+        cat_id, _ = _guess_category_by_rules(
+            corpus, categories, txn_type=txn.type.value, amount=float(txn.amount), member_names=members
+        )
+        current = cat_by_id.get(txn.category_id) if txn.category_id else None
+        current_valid = current is not None and current.type == txn.type
         if cat_id and cat_id != txn.category_id:
             txn.category_id = cat_id
             rules_count += 1
             db.add(txn)
-        elif txn.category_id is None:
-            remaining_txns.append(txn)
+        elif not cat_id:
+            if not current_valid and txn.category_id is not None:
+                # Category of the opposite type (e.g. an expense filed under 급여) is never right.
+                txn.category_id = None
+                db.add(txn)
+            if txn.category_id is None:
+                remaining_txns.append(txn)
 
     # Immediately commit rule-based classifications so they are never lost even if network issues occur
-    if rules_count > 0:
-        await db.commit()
+    await db.commit()
 
     # Phase 2: Batch AI classification with Gemini (chunks of 40 to ensure response in < 3s)
     if is_ai_enabled() and remaining_txns:
@@ -782,33 +571,27 @@ async def batch_auto_categorize_transactions(
         for i in range(0, min(len(ai_candidates), 120), chunk_size):
             chunk = ai_candidates[i : i + chunk_size]
             payload = [
-                {
-                    "id": str(t.id),
-                    "type": t.type.value if hasattr(t.type, "value") else str(t.type),
-                    "payee": t.payee,
-                    "memo": t.memo,
-                }
+                {"id": str(t.id), "type": t.type.value, "payee": t.payee, "memo": t.memo}
                 for t in chunk
             ]
             matched_map = suggest_categories_batch(payload, categories)
             chunk_updated = False
             for t in chunk:
-                tid_str = str(t.id)
-                if tid_str in matched_map:
-                    t.category_id = matched_map[tid_str]
+                cat_id = matched_map.get(str(t.id))
+                cat = cat_by_id.get(cat_id) if cat_id else None
+                if cat is not None and cat.type == t.type:
+                    t.category_id = cat.id
                     ai_count += 1
                     db.add(t)
                     chunk_updated = True
             if chunk_updated:
                 await db.commit()
+
     categorized_count = rules_count + ai_count
     remaining = total_processed - categorized_count
 
-    msg_parts = [f"총 {total_processed}건 검토 중 {categorized_count}건 세분화/분류 완료 (규칙: {rules_count}건, AI: {ai_count}건)"]
-    if fixed_incomes_count > 0:
-        msg_parts.append(f"과거 수입 거래 {fixed_incomes_count}건 정상 복구")
-    if removed_transfers_count > 0:
-        msg_parts.append(f"내부 이체 중복 {removed_transfers_count}건 정리")
+    msg_parts = [f"총 {total_processed}건 검토 중 {categorized_count}건 분류 (규칙: {rules_count}건, AI: {ai_count}건)"]
+    msg_parts.extend(extra_parts)
     if remaining > 0:
         msg_parts.append(f"미분류/유지: {remaining}건")
 

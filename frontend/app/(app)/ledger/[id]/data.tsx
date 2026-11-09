@@ -67,9 +67,9 @@ export default function DataScreen() {
 
   async function handleFixLegacyIncomes() {
     const ok = await confirmAsync(
-      '과거 수입 거래 일괄 복구',
-      '이전에 엑셀에서 지출로 잘못 등록되었던 급여(강유리급여 등), 통장 이자, 허브통장 입금 등의 거래를 자동으로 감지하여 정상적인 수입(+)으로 복구합니다. 진행하시겠습니까?',
-      { confirmText: '복구 실행' },
+      '수입/지출 방향 교정',
+      '명세서에서 가져온 거래의 잔액 기록을 앞뒤 거래와 비교해, 수입과 지출이 뒤바뀐 거래를 바로잡습니다. 방향이 바뀐 거래는 카테고리도 다시 지정됩니다. 진행하시겠습니까?',
+      { confirmText: '교정 실행' },
     );
     if (!ok) return;
 
@@ -80,13 +80,13 @@ export default function DataScreen() {
         converted_amount: number;
         message: string;
       }>(`/api/ledgers/${ledgerId}/transactions/fix-legacy-incomes`, { method: 'POST' });
-      notify('수입 거래 복구 완료', res.message);
+      notify('방향 교정 완료', res.message);
       queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
       queryClient.invalidateQueries({ queryKey: ['categories', ledgerId] });
       queryClient.invalidateQueries({ queryKey: ['stats'] });
       queryClient.invalidateQueries({ queryKey: ['summary', ledgerId] });
     } catch (err) {
-      notify('복구 실패', getErrorMessage(err, '수입 거래 복구 실패'));
+      notify('교정 실패', getErrorMessage(err, '수입/지출 방향 교정 실패'));
     } finally {
       setFixingIncomes(false);
     }
@@ -145,7 +145,7 @@ export default function DataScreen() {
     if (!transferData || transferData.total_count === 0) return;
     const ok = await confirmAsync(
       '내부 이체 중복 정리',
-      `감지된 ${transferData.total_count}쌍(총 ${transferData.total_count * 2}건, 중복금액 ${Number(transferData.total_amount).toLocaleString()}원)의 내부 이체 거래를 가계부에서 삭제하시겠습니까?\n\n허브통장과 생활비통장 간 오간 중복 거래가 제거되어 통계가 정확해집니다.`,
+      `감지된 ${transferData.total_count}쌍(총 ${transferData.total_count * 2}건, 쌍당 금액 합계 ${Number(transferData.total_amount).toLocaleString()}원)의 내부 이체 거래를 가계부에서 삭제하시겠습니까?\n\n내 통장끼리 옮긴 돈이 수입과 지출에 이중으로 잡히지 않게 됩니다.`,
       { confirmText: '삭제 실행', destructive: true },
     );
     if (!ok) return;
@@ -324,9 +324,9 @@ export default function DataScreen() {
 
       {/* 과거 지출로 잘못 등록된 수입 거래 일괄 복구 */}
       <View style={[styles.card, { borderColor: '#BBF7D0', backgroundColor: '#F0FDF4' }]}>
-        <Text style={[styles.cardTitle, { color: '#166534' }]}>💰 과거 지출로 잘못 등록된 수입 거래 일괄 복구</Text>
+        <Text style={[styles.cardTitle, { color: '#166534' }]}>💰 수입/지출 방향 교정</Text>
         <Text style={styles.cardHint}>
-          과거 명세서 업로드 시 지출(EXPENSE)로 잘못 저장되었던 급여(강유리급여 등), 통장 이자, 허브통장 입금 내역을 자동으로 수입(+)으로 전환하고 올바른 수입 카테고리로 정리합니다.
+          명세서에서 가져온 거래의 &apos;잔액&apos; 기록을 앞뒤 거래와 비교해, 실제로 돈이 들어왔는지 나갔는지 확인하고 뒤바뀐 수입/지출을 바로잡습니다. 키워드 추측이 아니라 잔액 변화로 판단하므로 정확합니다.
         </Text>
         <Pressable
           style={[styles.button, { backgroundColor: '#16A34A' }, fixingIncomes && { opacity: 0.6 }]}
@@ -336,7 +336,7 @@ export default function DataScreen() {
           {fixingIncomes ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>🔄 지출로 잡힌 수입 거래 정상 복구 실행</Text>
+            <Text style={styles.buttonText}>🔄 수입/지출 방향 교정 실행</Text>
           )}
         </Pressable>
       </View>
@@ -345,7 +345,7 @@ export default function DataScreen() {
       <View style={[styles.card, styles.actionCard]}>
         <Text style={styles.cardTitle}>미분류 거래 일괄 자동 분류 및 세분화</Text>
         <Text style={styles.cardHint}>
-          미분류 거래뿐만 아니라, 기존 '기타 지출'로 몰려있던 거래들을 분석하여 보험, 금융/대출, 저축/투자, 경조사/선물, 용돈 등으로 세분화하여 일괄 분류합니다.
+          수입/지출 방향을 먼저 교정한 뒤, 미분류·기타 거래와 유형이 맞지 않는 카테고리(예: 지출인데 &apos;급여&apos;)를 규칙과 AI로 다시 분류합니다. 직접 지정한 카테고리는 바꾸지 않습니다.
         </Text>
         <Pressable
           style={[styles.button, styles.successButton, categorizing && { opacity: 0.6 }]}
@@ -360,11 +360,11 @@ export default function DataScreen() {
         </Pressable>
       </View>
 
-      {/* 내부 이체 중복 거래 정리 (허브통장 ⇄ 생활비 등) */}
+      {/* 내부 이체 중복 거래 정리 (내 통장끼리 오간 돈) */}
       <View style={[styles.card, styles.transferCard]}>
-        <Text style={styles.cardTitle}>허브통장 ⇄ 생활비/공과금 중복 이체 정리</Text>
+        <Text style={styles.cardTitle}>내 통장끼리 오간 이체 정리</Text>
         <Text style={styles.cardHint}>
-          허브통장에서 생활비/공과금 통장으로 보낸 돈처럼, 가족/통장 간에 동일한 날짜와 금액으로 오간 입출금 쌍(내부 이체)을 감지하여 수입과 지출의 중복 집계를 정리합니다.
+          여러 통장의 내역을 함께 가져오면, 한 통장에서 다른 통장으로 옮긴 돈이 지출과 수입으로 두 번 잡힙니다. 같은 날 같은 금액으로 나가고 들어온 쌍을 찾아 보여주고, 확인 후 정리합니다. 방향 교정을 먼저 실행하세요.
         </Text>
         <Pressable
           style={[styles.button, styles.transferButton, scanningTransfers && { opacity: 0.6 }]}

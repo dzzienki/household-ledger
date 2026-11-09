@@ -15,6 +15,7 @@ from app.schemas.statement import (
     StatementItemPreview,
     StatementParseResponse,
 )
+from app.services.ledger_cleanup import ledger_member_names
 from app.services.statement_parser import parse_statement_file
 
 router = APIRouter(prefix="/ledgers/{ledger_id}/statements", tags=["statements"])
@@ -51,6 +52,7 @@ async def parse_statement(
         content_type=content_type,
         categories=categories,
         password=password,
+        member_names=await ledger_member_names(db, ledger.id, []),
     )
 
     if parsed.requires_password:

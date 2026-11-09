@@ -199,136 +199,211 @@ def _is_summary_row(row_strs: list[str]) -> bool:
     return any(marker in joined for marker in summary_markers)
 
 
+# Statement noise that must not influence keyword matching (e.g. "잔액 1,234원", "적요: ").
+_NOISE_RE = re.compile(r"잔액\s*-?[\d,]+\s*원|적요\s*:|승인취소")
+_MEMBER_SUFFIX_RE = re.compile(r"\((?:모임통장|모임원|송금|입금)\)")
+
+# Ordered rules: the first matching group wins, so specific groups come before broad ones.
+# Each entry: (keywords, candidate category names in priority order).
+_INCOME_RULES: list[tuple[list[str], list[str]]] = [
+    (["이자", "배당", "결산"], ["이자/배당", "이자", "금융수입"]),
+    (["급여", "월급", "상여", "보너스", "성과급", "급료", "수당"], ["급여", "월급", "소득"]),
+    (["당근마켓", "중고거래", "중고판매", "부업", "강의료", "원고료", "판매대금"], ["부수입"]),
+    (
+        [
+            "환급", "연말정산", "캐시백", "포인트", "적립", "지원금", "지원받은", "보험금", "축의금",
+            "용돈", "환불",
+            # Money coming back from the household's own savings / sibling accounts.
+            "적금", "모은돈", "예금", "만기", "해지", "생활비", "공과금", "관리비", "수혈", "보탬",
+            "장본비", "남은거",
+        ],
+        ["기타 수입", "기타수입", "부수입"],
+    ),
+]
+
+_EXPENSE_RULES: list[tuple[list[str], list[str]]] = [
+    (
+        ["보험", "실비", "현대해상", "교원라이프", "손해보험", "생명", "라이나", "메리츠", "db손보"],
+        ["보험", "보험/금융", "금융/보험"],
+    ),
+    (
+        ["대출", "이자", "상환", "원리금", "차용증"],
+        ["금융/대출", "대출/이자", "금융"],
+    ),
+    (
+        ["적금", "저축", "청약", "예금", "투자", "주식", "펀드", "모은돈", "isa", "연금저축"],
+        ["저축/투자", "저축", "적금/저축"],
+    ),
+    (
+        [
+            "축의금", "조의금", "부의금", "경조사", "결혼식", "장례", "돌잔치", "선물", "명절비",
+            "생신", "생일", "어버이날", "카네이션", "회비",
+        ],
+        ["경조사/선물", "경조사/회비", "경조사", "선물"],
+    ),
+    (["용돈", "가져갑니다"], ["용돈"]),
+    (
+        ["핸드폰", "휴대폰", "통신", "인터넷", "lgu+", "lguplus", "sk텔레콤", "kt", "알뜰폰", "요금제"],
+        ["통신", "통신/주거", "통신비"],
+    ),
+    (
+        [
+            "관리비", "공과금", "전기세", "전기요금", "한전", "도시가스", "가스비", "가스요금", "수도세",
+            "수도요금", "월세", "전세", "취득세", "재산세", "주민세", "종량제", "렌탈", "구독료",
+            "빨래", "세탁",
+        ],
+        ["주거", "주거/통신", "공과금"],
+    ),
+    (
+        [
+            "약국", "병원", "의원", "치과", "내과", "외과", "한의원", "피부과", "안과", "산부인과",
+            "이비인후과", "초음파", "영양제", "유산균", "건강검진", "수술", "치료", "약값", "처방", "교정",
+        ],
+        ["의료", "의료/건강", "건강"],
+    ),
+    (
+        ["학원", "강의", "수강", "도서", "서점", "교보문고", "yes24", "알라딘", "교재", "교육"],
+        ["교육"],
+    ),
+    (
+        [
+            "택시", "카카오t", "카카오모빌리티", "지하철", "버스", "코레일", "ktx", "srt", "기차",
+            "하이패스", "주유", "칼텍스", "sk에너지", "s-oil", "오일뱅크", "주차", "톨게이트", "그린카",
+            "쏘카", "티머니", "교통", "항공", "대한항공", "아시아나", "제주항공", "진에어", "티웨이",
+        ],
+        ["교통", "차량/교통", "교통/차량"],
+    ),
+    (
+        [
+            "여행", "호텔", "숙소", "펜션", "에어비앤비", "영화", "cgv", "롯데시네마", "메가박스",
+            "넷플릭스", "유튜브", "티빙", "왓챠", "디즈니", "쿠팡플레이", "입장료", "데이트", "공연",
+            "전시", "놀이공원", "화담숲", "포토이즘", "노래방", "볼링", "헬스", "필라테스", "요가",
+            "멤버십", "네이버플러스", "투어", "리조트", "유흥",
+        ],
+        ["문화/여가", "문화/생활", "구독"],
+    ),
+    (
+        [
+            "스타벅스", "이디야", "투썸", "메가mgc", "빽다방", "컴포즈", "커피", "카페", "베이커리",
+            "뚜레쥬르", "파리바게뜨", "식당", "음식", "식사", "식비", "외식", "점심", "저녁", "배달의민족",
+            "요기요", "쿠팡이츠", "치킨", "버거", "맥도날드", "피자", "김밥", "써브웨이", "떡볶이", "초밥",
+            "국밥", "순대국", "코다리", "탕수육", "짜장", "짬뽕", "만두", "도시락", "샌드위치", "토스트",
+            "샐러드", "케이크", "케잌", "와플", "도넛", "아이스크림", "베스킨", "배스킨", "요아정", "장보기",
+            "장본", "반찬", "식자재", "과일", "우유", "라면", "생수", "음료", "주스", "맥주", "고기", "닭가슴살",
+            "통닭", "바나나", "고구마", "감자", "버섯", "양파", "미나리", "대하", "새우", "오꼬노미야끼",
+        ],
+        ["식비", "외식", "카페/간식", "간식"],
+    ),
+    (
+        [
+            "마트", "슈퍼", "이마트", "홈플러스", "롯데마트", "하나로마트", "편의점", "gs25", "cu", "세븐일레븐",
+            "쿠팡", "네이버페이", "npay", "11번가", "g마켓", "옥션", "aliexpress", "다이소", "올리브영",
+            "무신사", "당근마켓", "쇼핑", "의류", "옷", "신발", "운동화", "원피스", "스커트", "가디건",
+            "화장품", "클렌징", "생필품", "세제", "생리대", "이불", "담요", "베개", "가습기", "케이스",
+        ],
+        ["쇼핑", "마트/생필품", "생활용품"],
+    ),
+    (
+        [
+            "카드값", "카드대금", "카드비", "빵꾸", "토스머니", "토스충전", "수리비", "atm", "송금", "이체",
+            "생활비", "모임통장",
+        ],
+        ["기타 지출", "기타지출", "기타"],
+    ),
+]
+
+
+def _normalize_corpus(text: str) -> str:
+    return _NOISE_RE.sub(" ", str(text or "")).lower()
+
+
+def _kw_match(text: str, kw: str) -> bool:
+    # Short ASCII keywords ("cu", "kt") must match a whole token, not part of a word.
+    if kw.isascii() and len(kw) <= 3:
+        return re.search(rf"(?<![a-z0-9]){re.escape(kw)}(?![a-z0-9])", text) is not None
+    return kw in text
+
+
+def _pick_category(names: dict[str, UUID], candidates: list[str]) -> tuple[UUID | None, str | None]:
+    for cand in candidates:
+        if cand in names:
+            return names[cand], cand
+    for cand in candidates:
+        for c_name, c_id in names.items():
+            if cand in c_name:
+                return c_id, c_name
+    return None, None
+
+
+def _bare_member_name(text: str, member_names: set[str]) -> str | None:
+    """Return the member's name if `text` says nothing but who sent/received the money."""
+    s = _MEMBER_SUFFIX_RE.sub("", _normalize_corpus(text))
+    found = [m for m in member_names if m and m in s]
+    if not found:
+        return None
+    for m in found:
+        s = s.replace(m, "")
+    s = re.sub(r"입금|출금|자동이체|이체|송금|내계좌간|모임원|[\s|:()\-]", "", s)
+    return found[0] if not s else None
+
+
 def _guess_category_by_rules(
     payee: str,
     categories: list[Category],
     txn_type: str = "expense",
     amount: float | None = None,
+    member_names: set[str] | None = None,
 ) -> tuple[UUID | None, str | None]:
-    p = str(payee or "").lower()
-    txn_type_str = str(txn_type).lower()
+    """Keyword-based category guess. Only returns a category whose type matches txn_type.
 
-    if "income" in txn_type_str:
-        income_cats = {
-            c.name: c.id
-            for c in categories
-            if str(c.type).lower() in ("transactiontype.income", "income")
-        }
-        # If large deposit by primary earners (>= 1,000,000), prioritize salary category
-        if amount is not None and amount >= 1000000 and any(kw in p for kw in ["최명준", "강유리"]):
-            for s_cat in ["급여", "월급", "소득"]:
-                for c_name, c_id in income_cats.items():
-                    if s_cat in c_name or c_name in s_cat:
-                        return c_id, c_name
+    `member_names` are the household's own people (e.g. ledger members, 모임통장 members).
+    A deposit whose payee is exactly one of them and is salary-sized is treated as salary.
+    """
+    text = _normalize_corpus(payee)
+    is_income = "income" in str(txn_type).lower()
+    want = TransactionType.INCOME if is_income else TransactionType.EXPENSE
+    names = {c.name.strip(): c.id for c in categories if c.type == want}
+    if not names:
+        return None, None
+    members = member_names or set()
 
-        income_rules = [
-            (["급여", "월급", "상여", "보너스", "수당"], ["급여", "월급", "소득"]),
-            (["통장 이자", "통장이자", "예금이자", "적금이자", "이자/배당", "배당", "이자"], ["이자/배당", "이자", "금융수입", "기타수입", "기타 수입"]),
-            (["생활비", "식비생활비", "수혈", "환급", "연말정산", "캐시백", "포인트", "적립", "당근", "중고", "송금", "입금", "모임통장", "최명준", "강유리", "공과금", "보탬", "모은돈", "지원", "남은거", "이체"], ["기타 수입", "기타수입", "부수입", "수입"]),
-        ]
-        for keywords, target_cats in income_rules:
-            if any(kw in p for kw in keywords):
-                for t_cat in target_cats:
-                    for c_name, c_id in income_cats.items():
-                        if t_cat in c_name or c_name in t_cat:
-                            return c_id, c_name
-        for c_name, c_id in income_cats.items():
-            if c_name in p:
-                return c_id, c_name
+    if is_income:
+        for keywords, candidates in _INCOME_RULES:
+            if any(_kw_match(text, kw) for kw in keywords):
+                return _pick_category(names, candidates)
+        if _bare_member_name(payee, members):
+            if amount is not None and amount >= 1_000_000:
+                return _pick_category(names, ["급여", "월급", "소득"])
+            return _pick_category(names, ["기타 수입", "기타수입"])
         return None, None
 
-    name_map = {
-        c.name: c.id
-        for c in categories
-        if str(c.type).lower() in ("transactiontype.expense", "expense")
-    }
-
-    cat_rules = [
-        # 식비
-        ([
-            "스타벅스", "이디야", "투썸", "메가mgc", "빽다방", "컴포즈", "커피", "카페", "베이커리", "뚜레쥬르", "파리바게뜨", "좋은아침", "버터비버",
-            "식당", "음식점", "식사", "순대국", "코다리", "김밥", "충무김밥", "써브웨이", "치킨", "버거", "맥도날드", "피자", "배달의민족", "요기요", "쿠팡이츠",
-            "풀무원", "맛사랑", "단정", "케이크", "케잌", "바나나", "고구마", "우유", "가지", "과일", "미나리", "맥주", "닭가슴살", "도틔대가", "와플", "요아정",
-            "탕수육", "닭볶음탕", "김치", "라면", "삼양라면", "파스타면", "대하", "음식", "저녁", "점심", "아침", "밥", "장보기", "장 봄", "식비", "생수",
-            "탄산수", "떡볶이", "주스", "유부", "피나치공", "피요르드", "모짜", "베스킨", "배스킨", "아이스크림", "도넛", "초밥", "찌개", "구이", "고기",
-            "당근", "감자", "버섯", "샐러드", "샌드위치", "토스트", "도시락", "만두", "짬뽕", "짜장", "반찬", "식자재", "음료"
-        ], ["식비", "외식", "카페/간식", "간식"]),
-        # 교통
-        ([
-            "택시", "택시비", "카카오t", "카카오_택시", "카카오_개인택시", "카카오모빌리티", "모빌리티", "그린카", "쏘카", "지하철", "버스", "코레일", "ktx", "기차", "하이패스", "주유",
-            "gs칼텍스", "sk에너지", "s-oil", "현대오일", "교통", "교통비", "대중교통", "티머니", "주차", "주차장", "톨게이트"
-        ], ["교통", "차량/교통", "교통/차량"]),
-        # 주거 / 공과금
-        ([
-            "관리비", "공과금", "도시가스", "가스비", "전기세", "한전", "수도세", "수도요금", "월세", "취득세", "재산세", "주민세", "자동차세", "국세", "지방세",
-            "엘지전자 구독료", "구독료", "렌탈", "수세미", "종량제", "아파트관리비", "주거", "빨래", "세탁"
-        ], ["주거", "주거/통신", "공과금"]),
-        # 통신
-        ([
-            "통신", "핸드폰비", "핸드폰", "휴대폰", "통신비", "인터넷", "lgu+", "lguplus", "sk텔레콤", "kt", "통신요금", "알뜰폰"
-        ], ["통신", "통신/주거", "통신비"]),
-        # 의료 / 건강
-        ([
-            "약국", "의원", "병원", "내과", "외과", "정형외과", "치과", "한의원", "이레미즈", "새희망내과", "대학약국", "유산균", "영양제", "교정",
-            "다이어트비", "다이어트", "치료", "약값", "건강검진", "수술비", "수술", "헬스", "헬스장", "밴드", "데일밴드", "약", "치료비", "병원비"
-        ], ["의료", "의료/건강", "건강"]),
-        # 쇼핑 / 생필품
-        ([
-            "마트", "이마트", "홈플러스", "롯데마트", "지에스25", "gs25", "씨유", "cu", "세븐일레븐", "이마트24", "농협", "하나로마트", "우체국쇼핑",
-            "g마켓", "옥션", "쿠팡", "네이버페이", "npay", "11번가", "aliexpress", "쇼핑", "스커트", "옷", "비키니", "가습기", "의류", "신발", "베개",
-            "다이소", "올리브영", "클렌징", "화장품", "이불", "양말", "장갑", "바디워시", "세탁세제", "섬유유연제", "세제", "생필품", "장비 구매", "담요"
-        ], ["쇼핑", "마트/생필품", "생활비"]),
-        # 문화 / 여가
-        ([
-            "용돈", "여행", "데이트", "호텔", "숙소", "영화", "cgv", "롯데시네마", "메가박스", "넷플릭스", "유튜브", "쿠팡플레이", "티빙", "왓챠", "디즈니",
-            "모노레일", "입장료", "포토이즘", "화담숲", "취미", "여가", "문화", "네이버플러스", "멤버십", "우비", "구명조끼", "샤워"
-        ], ["문화/여가", "문화/생활", "구독"]),
-        # 교육
-        ([
-            "학원", "강의", "책", "도서", "교육", "수업", "교재"
-        ], ["교육"]),
-        # 보험
-        ([
-            "보험", "보험비", "보험료", "현대해상", "실비", "교원라이프", "카카오페이손해보험", "손해보험", "생명보험", "화재보험", "암보험", "자동차보험"
-        ], ["보험", "보험/금융", "금융/보험", "기타 지출"]),
-        # 금융 / 대출
-        ([
-            "대출", "대출이자", "차용증이자", "신용대출", "대출상환", "대출상환수수료", "상환", "이자"
-        ], ["금융/대출", "대출/이자", "금융", "기타 지출"]),
-        # 저축 / 투자
-        ([
-            "적금", "적금분", "저축", "청약", "주택청약", "모은돈", "예금", "투자", "주식", "펀드"
-        ], ["저축/투자", "저축", "적금/저축", "기타 지출"]),
-        # 경조사 / 선물
-        ([
-            "축의금", "조의금", "부의금", "경조사", "결혼식", "선물", "선물비", "명절", "명절비", "생신", "생신비", "생일", "어버이날", "회비"
-        ], ["경조사/선물", "경조사/회비", "경조사", "선물", "기타 지출"]),
-        # 용돈
-        ([
-            "용돈", "강유리용돈", "최명준용돈", "가져갑니다"
-        ], ["용돈", "문화/여가", "기타 지출"]),
-        # 기타 지출 (통장/부부송금/생활비이체/기타)
-        ([
-            "토스머니", "토스충전", "토스뱅크", "카카오페이", "기타지출", "수리비", "린클",
-            "생활비", "모임통장", "최명준", "강유리", "빵꾸", "atm", "송금", "이체"
-        ], ["기타 지출", "기타지출", "기타"]),
-    ]
-
-    for keywords, target_cats in cat_rules:
-        if any(kw in p for kw in keywords):
-            for t_cat in target_cats:
-                for c_name, c_id in name_map.items():
-                    if t_cat in c_name or c_name in t_cat:
-                        return c_id, c_name
-
-    for c_name, c_id in name_map.items():
-        if c_name in p:
+    for keywords, candidates in _EXPENSE_RULES:
+        if any(_kw_match(text, kw) for kw in keywords):
+            cat = _pick_category(names, candidates)
+            if cat[0]:
+                return cat
+    if _bare_member_name(payee, members):
+        return _pick_category(names, ["기타 지출", "기타지출", "기타"])
+    for c_name, c_id in names.items():
+        if c_name.lower() in text:
             return c_id, c_name
-
     return None, None
 
 
-def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> StatementParseResult:
+def household_member_names(texts: list[str], extra: list[str] | None = None) -> set[str]:
+    """Collect household people from statement text like "홍길동(모임통장)" plus given names."""
+    found = {n.strip() for n in (extra or []) if n and n.strip()}
+    for t in texts:
+        for m in re.finditer(r"([가-힣]{2,4})\((?:모임통장|모임원)\)", t or ""):
+            found.add(m.group(1))
+    return found
+
+
+def _parse_raw_table(
+    rows: list[list[Any]],
+    categories: list[Category],
+    member_names: set[str] | None = None,
+) -> StatementParseResult:
     text_corpus = " ".join(" ".join(_clean_str(c) for c in r) for r in rows[:15])
     card_company = _detect_card_company(text_corpus)
 
@@ -352,7 +427,19 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
     items: list[ParsedStatementItem] = []
     total_amount = 0.0
 
-    for r in rows[header_idx + 1:]:
+    data_rows = rows[header_idx + 1:]
+    members = household_member_names(
+        [_clean_str(r[payee_col]) for r in data_rows if payee_col < len(r)],
+        list(member_names or []),
+    )
+    # Bank exports (토스 etc.) have a running balance and carry the direction in the sign of the
+    # amount (or in separate 입금/출금 columns). Card statements list charges as positive amounts,
+    # with refunds/cancellations negative or flagged as "취소".
+    is_bank_export = (
+        deposit_col is not None or withdrawal_col is not None or (balance_col is not None and amount_col is not None)
+    )
+
+    for r in data_rows:
         row_strs = [_clean_str(c) for c in r]
         if not any(row_strs) or _is_summary_row(row_strs):
             continue
@@ -372,8 +459,12 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
         # If user_memo is present and raw_payee is a generic personal/member name, prioritize user_memo as payee!
         clean_payee = raw_payee
         if user_memo:
-            generic_markers = ["최명준", "강유리", "모임통장", "모임원", "송금", "출금", "입금", "체크카드", "적요"]
-            if any(m in raw_payee for m in generic_markers) or len(raw_payee) <= 3:
+            generic_markers = ["모임통장", "모임원", "송금", "출금", "입금", "체크카드", "적요", "내계좌", "자동이체"]
+            if (
+                any(m in raw_payee for m in generic_markers)
+                or _bare_member_name(raw_payee, members)
+                or len(raw_payee) <= 3
+            ):
                 clean_payee = user_memo
             else:
                 clean_payee = raw_payee
@@ -405,21 +496,19 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
                 raw_amt = _clean_amount(r[amount_col])
                 if raw_amt is not None and raw_amt != 0:
                     final_amount = abs(raw_amt)
-                    if raw_amt < 0:
-                        txn_type = "expense"
-                    elif raw_amt > 0:
-                        txn_type = "income"
+                    if is_bank_export:
+                        txn_type = "income" if raw_amt > 0 else "expense"
+                    else:
+                        txn_type = "income" if raw_amt < 0 else "expense"
 
         if final_amount is None or final_amount == 0:
             continue
 
         raw_status = _clean_str(r[status_col]) if status_col is not None and status_col < len(r) else ""
-        if any(w in raw_status for w in ["입금", "이자", "수입", "환급", "캐시백", "이자입금"]):
+        is_cancel = "취소" in raw_status or "취소" in raw_payee or "취소" in user_memo
+        if not is_bank_export and (is_cancel or any(w in raw_status for w in ["환급", "캐시백"])):
+            # Card statement refund rows are sometimes positive with a "취소" flag.
             txn_type = "income"
-        elif any(w in raw_status for w in ["출금", "결제", "승인", "송금", "이체", "체크", "자동이체", "내계좌간자동이체", "모임원송금"]):
-            txn_type = "expense"
-        elif "취소" in raw_status or "취소" in raw_payee or "취소" in user_memo:
-            txn_type = "income" if txn_type == "expense" else "expense"
 
         memos = []
         if user_memo:
@@ -440,7 +529,9 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
             bal = _clean_amount(r[balance_col])
             if bal is not None:
                 memos.append(f"잔액 {int(bal):,}원")
-        if "취소" in raw_status or "취소" in raw_payee or "취소" in user_memo:
+        if raw_status and is_bank_export:
+            memos.append(raw_status)
+        if is_cancel:
             memos.append("승인취소")
 
         approval_no = None
@@ -452,7 +543,9 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
         memo_str = " | ".join(memos) if memos else None
 
         search_corpus = f"{clean_payee} {user_memo} {raw_payee}"
-        cat_id, cat_name = _guess_category_by_rules(search_corpus, categories, txn_type=txn_type, amount=final_amount)
+        cat_id, cat_name = _guess_category_by_rules(
+            search_corpus, categories, txn_type=txn_type, amount=final_amount, member_names=members
+        )
 
         items.append(
             ParsedStatementItem(
@@ -468,7 +561,6 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
                 approval_no=approval_no,
             )
         )
-        total_amount += final_amount
         total_amount += final_amount
 
     return StatementParseResult(
@@ -703,6 +795,7 @@ def parse_statement_file(
     content_type: str | None,
     categories: list[Category],
     password: str | None = None,
+    member_names: set[str] | None = None,
 ) -> StatementParseResult:
     """Master entry point for parsing any credit card statement file."""
     fname = filename.lower()
@@ -737,7 +830,7 @@ def parse_statement_file(
         except Exception:
             rows = _parse_xlsx_xml(content)
         if rows:
-            res = _parse_raw_table(rows, categories)
+            res = _parse_raw_table(rows, categories, member_names)
             if res.total_count > 0:
                 return res
 
@@ -745,7 +838,7 @@ def parse_statement_file(
     if fname.endswith(".xls"):
         rows = _parse_xls(content)
         if rows:
-            res = _parse_raw_table(rows, categories)
+            res = _parse_raw_table(rows, categories, member_names)
             if res.total_count > 0:
                 return res
 
@@ -753,7 +846,7 @@ def parse_statement_file(
     if fname.endswith(".csv") or content_type == "text/csv":
         rows = _parse_csv(content)
         if rows:
-            res = _parse_raw_table(rows, categories)
+            res = _parse_raw_table(rows, categories, member_names)
             if res.total_count > 0:
                 return res
 
