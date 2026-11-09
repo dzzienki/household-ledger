@@ -270,6 +270,74 @@ def suggest_category(
     )
 
 
+def suggest_categories_batch(
+    items: list[dict[str, Any]],
+    categories: list[Category],
+) -> dict[str, UUID]:
+    """Classify multiple transactions in a single Gemini request to prevent timeouts."""
+    if not is_ai_enabled() or not items:
+        return {}
+
+    category_map = {str(c.id): c for c in categories}
+    cat_by_name = {c.name.strip(): c.id for c in categories}
+    catalog_lines = "\n".join(f"- {c.name} (id: {c.id}, type: {c.type.value})" for c in categories)
+
+    system = (
+        "You are an assistant that classifies Korean household ledger transactions into "
+        "the user's existing categories. You will receive a list of transactions. "
+        "For each transaction, pick the best matching category from the available categories list. "
+        "Always reply with JSON only.\n\n"
+        f"Available categories:\n{catalog_lines}\n\n"
+        "Respond with a JSON object containing an 'items' array:\n"
+        '{\n'
+        '  "items": [\n'
+        '    {"id": "<txn_id>", "category_id": "<uuid or null>", "category_name": "<exact name>"}\n'
+        '  ]\n'
+        '}'
+    )
+
+    clean_items = [
+        {
+            "id": it["id"],
+            "type": it.get("type", "expense"),
+            "payee": it.get("payee") or "",
+            "memo": it.get("memo") or "",
+        }
+        for it in items
+    ]
+
+    user_msg = f"Transactions to classify:\n{json.dumps(clean_items, ensure_ascii=False)}"
+
+    try:
+        client = _gemini_client()
+        response = generate_content_with_retry(
+            client=client,
+            contents=user_msg,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=system,
+                response_mime_type="application/json",
+                temperature=0.1,
+            ),
+        )
+        parsed = _extract_json(response.text or "{}")
+        results: dict[str, UUID] = {}
+        for res_item in parsed.get("items", []):
+            txn_id = str(res_item.get("id"))
+            cat_id_raw = res_item.get("category_id")
+            cat_name = res_item.get("category_name")
+            matched_id: UUID | None = None
+            if cat_id_raw and str(cat_id_raw) in category_map:
+                matched_id = UUID(str(cat_id_raw))
+            elif cat_name and cat_name.strip() in cat_by_name:
+                matched_id = cat_by_name[cat_name.strip()]
+            if matched_id:
+                results[txn_id] = matched_id
+        return results
+    except Exception as exc:
+        logger.warning("Batch AI categorization error: %s", exc)
+        return {}
+
+
 def extract_receipt(
     *,
     image_bytes: bytes,

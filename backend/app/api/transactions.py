@@ -333,11 +333,11 @@ async def batch_auto_categorize_transactions(
 
     rules_count = 0
     ai_count = 0
-    from app.services.ai import is_ai_enabled, suggest_category
+    from app.services.ai import is_ai_enabled, suggest_categories_batch
     from app.services.statement_parser import _guess_category_by_rules
 
-    ai_enabled = is_ai_enabled()
-
+    # Phase 1: High-speed rule-based classification (all in-memory regex/substring, < 0.05s)
+    remaining_txns: list[Transaction] = []
     for txn in txns:
         corpus = f"{txn.payee or ''} {txn.memo or ''}".strip()
         cat_id, cat_name = _guess_category_by_rules(corpus, categories, txn_type=txn.type.value)
@@ -345,22 +345,40 @@ async def batch_auto_categorize_transactions(
             txn.category_id = cat_id
             rules_count += 1
             db.add(txn)
-        elif ai_enabled and (txn.payee or txn.memo):
-            try:
-                suggestion = suggest_category(
-                    payee=txn.payee,
-                    memo=txn.memo,
-                    txn_type=txn.type.value,
-                    categories=categories,
-                )
-                if suggestion and suggestion.category_id:
-                    txn.category_id = suggestion.category_id
-                    ai_count += 1
-                    db.add(txn)
-            except Exception:
-                pass
+        else:
+            remaining_txns.append(txn)
 
-    await db.commit()
+    # Immediately commit rule-based classifications so they are never lost even if network issues occur
+    if rules_count > 0:
+        await db.commit()
+
+    # Phase 2: Batch AI classification with Gemini (chunks of 40 to ensure response in < 3s)
+    if is_ai_enabled() and remaining_txns:
+        ai_candidates = [t for t in remaining_txns if t.payee or t.memo]
+        chunk_size = 40
+        # Process up to 3 chunks (120 items) per invocation to guarantee fast response
+        for i in range(0, min(len(ai_candidates), 120), chunk_size):
+            chunk = ai_candidates[i : i + chunk_size]
+            payload = [
+                {
+                    "id": str(t.id),
+                    "type": t.type.value,
+                    "payee": t.payee,
+                    "memo": t.memo,
+                }
+                for t in chunk
+            ]
+            matched_map = suggest_categories_batch(payload, categories)
+            chunk_updated = False
+            for t in chunk:
+                tid_str = str(t.id)
+                if tid_str in matched_map:
+                    t.category_id = matched_map[tid_str]
+                    ai_count += 1
+                    db.add(t)
+                    chunk_updated = True
+            if chunk_updated:
+                await db.commit()
     categorized_count = rules_count + ai_count
     remaining = total_processed - categorized_count
 
