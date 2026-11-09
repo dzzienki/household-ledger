@@ -5,7 +5,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { confirmAsync, notify } from '@/lib/dialog';
+import { notify } from '@/lib/dialog';
 
 import { API_URL, api, apiDownloadBlob, apiUpload, getErrorMessage } from '@/lib/api';
 import { ACCESS_TOKEN_KEY, storage } from '@/lib/storage';
@@ -34,7 +34,6 @@ export default function DataScreen() {
   const [pickingStatement, setPickingStatement] = useState(false);
   const [statementResult, setStatementResult] = useState<StatementResult | null>(null);
   const [categorizing, setCategorizing] = useState(false);
-  const [deletingBulk, setDeletingBulk] = useState(false);
 
   async function handleBatchCategorize() {
     setCategorizing(true);
@@ -58,55 +57,7 @@ export default function DataScreen() {
     }
   }
 
-  async function handleDeleteToday() {
-    const ok = await confirmAsync(
-      '오늘 등록된 토스 거래 전체 삭제',
-      '오늘 엑셀로 등록된 거래내역만 삭제하시겠습니까?\n이전에 등록해두셨던 기존 거래는 안전하게 유지되며, 방금 토스에서 들어와 분류된 거래와 미분류 거래만 모두 깔끔하게 삭제됩니다.',
-      { confirmText: '오늘 등록분 삭제', destructive: true },
-    );
-    if (!ok) return;
 
-    setDeletingBulk(true);
-    try {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const res = await api<{ deleted_count: number; message: string }>(
-        `/api/ledgers/${ledgerId}/transactions/bulk?created_after=${todayStart.toISOString()}`,
-        { method: 'DELETE' },
-      );
-      notify('삭제 완료', res.message);
-      queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
-      queryClient.invalidateQueries({ queryKey: ['stats'] });
-    } catch (err) {
-      notify('삭제 실패', getErrorMessage(err, '거래내역 삭제 실패'));
-    } finally {
-      setDeletingBulk(false);
-    }
-  }
-
-  async function handleBulkDelete() {
-    const ok = await confirmAsync(
-      '모든 거래내역 삭제',
-      '이 가계부에 등록된 모든 거래내역을 정말 삭제하시겠습니까?\n토스 엑셀 재등록을 위해 초기화할 때 사용하며, 이 작업은 되돌릴 수 없습니다.',
-      { confirmText: '전체 삭제', destructive: true },
-    );
-    if (!ok) return;
-
-    setDeletingBulk(true);
-    try {
-      const res = await api<{ deleted_count: number; message: string }>(
-        `/api/ledgers/${ledgerId}/transactions/bulk`,
-        { method: 'DELETE' },
-      );
-      notify('삭제 완료', res.message);
-      queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
-      queryClient.invalidateQueries({ queryKey: ['stats'] });
-    } catch (err) {
-      notify('삭제 실패', getErrorMessage(err, '거래내역 삭제 실패'));
-    } finally {
-      setDeletingBulk(false);
-    }
-  }
 
   async function exportCsv() {
     setDownloading(true);
@@ -325,32 +276,6 @@ export default function DataScreen() {
           </View>
         )}
       </View>
-
-      {/* 가계부 거래내역 초기화 (일괄 삭제) */}
-      <View style={[styles.card, styles.dangerCard]}>
-        <Text style={[styles.cardTitle, { color: '#B91C1C' }]}>거래내역 정리 및 초기화</Text>
-        <Text style={styles.cardHint}>
-          오늘 엑셀로 등록된 토스 거래내역(분류/미분류 포함)만 쏙 골라 삭제하거나, 가계부 전체 거래를 초기화할 수 있습니다.
-        </Text>
-        <Pressable
-          style={[styles.button, styles.dangerButton, { marginBottom: 8 }, deletingBulk && { opacity: 0.6 }]}
-          disabled={deletingBulk}
-          onPress={handleDeleteToday}
-        >
-          {deletingBulk ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>🧹 오늘 등록된 토스 거래 전체 삭제 (기존 데이터 보존)</Text>
-          )}
-        </Pressable>
-        <Pressable
-          style={[styles.button, styles.secondary, { borderColor: '#FCA5A5' }, deletingBulk && { opacity: 0.6 }]}
-          disabled={deletingBulk}
-          onPress={handleBulkDelete}
-        >
-          <Text style={[styles.secondaryText, { color: '#DC2626' }]}>전체 거래내역 초기화 (모두 삭제)</Text>
-        </Pressable>
-      </View>
     </ScrollView>
   );
 }
@@ -399,10 +324,4 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
   },
   successButton: { backgroundColor: '#16A34A' },
-  dangerCard: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-    borderWidth: 1,
-  },
-  dangerButton: { backgroundColor: '#DC2626' },
 });
