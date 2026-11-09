@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from datetime import date, datetime
-from typing import Annotated
+from decimal import Decimal
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
