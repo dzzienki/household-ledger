@@ -274,6 +274,8 @@ export interface StatementItemPreview {
   card_name?: string | null;
   approval_no?: string | null;
   is_duplicate: boolean;
+  /** 'existing': already in the ledger, 'dismissed': an internal transfer cleaned up before. */
+  duplicate_reason?: 'existing' | 'dismissed' | null;
   is_selected: boolean;
 }
 

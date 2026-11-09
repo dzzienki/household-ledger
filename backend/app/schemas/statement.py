@@ -19,6 +19,8 @@ class StatementItemPreview(BaseModel):
     card_name: str | None = None
     approval_no: str | None = None
     is_duplicate: bool = False
+    # "existing": already in the ledger; "dismissed": an internal transfer the user cleaned up before.
+    duplicate_reason: str | None = None
     is_selected: bool = True
 
 

@@ -1,5 +1,6 @@
 from app.models.budget import Budget
 from app.models.category import Category, TransactionType
+from app.models.dismissed_transaction import DismissedTransaction
 from app.models.exchange_rate import ExchangeRate
 from app.models.invitation import LedgerInvitation
 from app.models.ledger import Ledger, LedgerMember, LedgerRole, LedgerType
@@ -18,6 +19,7 @@ __all__ = [
     "AppSetting",
     "Budget",
     "Category",
+    "DismissedTransaction",
     "ExchangeRate",
     "Ledger",
     "LedgerInvitation",

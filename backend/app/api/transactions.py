@@ -11,6 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.api.deps import DbDep, get_ledger_membership, require_role
 from app.models import (
     Category,
+    DismissedTransaction,
     Ledger,
     LedgerMember,
     LedgerRole,
@@ -39,6 +40,7 @@ from app.services.ledger_cleanup import (
     find_internal_transfer_pairs,
     infer_types_from_balance,
     ledger_member_names,
+    memo_balance,
 )
 from app.services.recurring import materialize_due_for_ledger
 
@@ -322,6 +324,23 @@ def _transfer_item(t: Transaction) -> InternalTransferItem:
     )
 
 
+async def _delete_as_dismissed(db: AsyncSession, txns: list[Transaction]) -> None:
+    """Deletes transactions but keeps their fingerprint so a later statement re-import skips them."""
+    for t in txns:
+        db.add(
+            DismissedTransaction(
+                ledger_id=t.ledger_id,
+                type=t.type,
+                amount=t.amount,
+                transaction_date=t.transaction_date,
+                balance=memo_balance(t.memo),
+                payee=t.payee,
+            )
+        )
+        await db.delete(t)
+    await db.commit()
+
+
 async def _detect_transfer_pairs(db: AsyncSession, ledger_id: UUID) -> list[InternalTransferPair]:
     txns = list((await db.exec(select(Transaction).where(Transaction.ledger_id == ledger_id))).all())
     members = await ledger_member_names(db, ledger_id, txns)
@@ -383,9 +402,7 @@ async def resolve_internal_transfer_pairs(
         Transaction.id.in_(txn_ids_to_delete),
     )
     txns_to_delete = list((await db.exec(stmt)).all())
-    for t in txns_to_delete:
-        await db.delete(t)
-    await db.commit()
+    await _delete_as_dismissed(db, txns_to_delete)
 
     pair_count = len(txns_to_delete) // 2
     pair_amount = sum((t.amount for t in txns_to_delete if t.type == TransactionType.EXPENSE), Decimal(0))
@@ -496,10 +513,9 @@ async def batch_auto_categorize_transactions(
         tids = [p.expense_txn.id for p in pairs] + [p.income_txn.id for p in pairs]
         if tids:
             del_stmt = select(Transaction).where(Transaction.ledger_id == ledger.id, Transaction.id.in_(tids))
-            for t in (await db.exec(del_stmt)).all():
-                await db.delete(t)
-                removed_transfers_count += 1
-            await db.commit()
+            to_delete = list((await db.exec(del_stmt)).all())
+            await _delete_as_dismissed(db, to_delete)
+            removed_transfers_count = len(to_delete)
 
     misc_cat_ids = {c.id for c in categories if c.name in ("기타 지출", "기타 수입", "기타")}
 

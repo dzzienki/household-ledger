@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlmodel import select
 
 from app.api.deps import DbDep, get_ledger_membership, require_role
-from app.models import Category, Ledger, LedgerMember, LedgerRole, Transaction
+from app.models import Category, DismissedTransaction, Ledger, LedgerMember, LedgerRole, Transaction
 from app.models.category import TransactionType
 from app.schemas.statement import (
     StatementImportRequest,
@@ -15,7 +15,13 @@ from app.schemas.statement import (
     StatementItemPreview,
     StatementParseResponse,
 )
-from app.services.ledger_cleanup import ledger_member_names
+from app.services.ledger_cleanup import (
+    DuplicateMatcher,
+    Fingerprint,
+    fingerprint_of,
+    ledger_member_names,
+    memo_balance,
+)
 from app.services.statement_parser import parse_statement_file
 
 router = APIRouter(prefix="/ledgers/{ledger_id}/statements", tags=["statements"])
@@ -65,43 +71,49 @@ async def parse_statement(
             items=[],
         )
 
-    # Fetch existing transactions for duplicate detection
+    # Duplicate detection against what is already in the ledger and what the user removed on purpose
+    existing: list[Fingerprint] = []
+    dismissed: list[Fingerprint] = []
     if parsed.items:
-        min_date = min(it.transaction_date for it in parsed.items)
-        max_date = max(it.transaction_date for it in parsed.items)
-        min_d = datetime.strptime(min_date, "%Y-%m-%d").date()
-        max_d = datetime.strptime(max_date, "%Y-%m-%d").date()
-
-        existing_txns = list(
-            (
-                await db.exec(
-                    select(Transaction).where(
-                        Transaction.ledger_id == ledger.id,
-                        Transaction.transaction_date >= min_d,
-                        Transaction.transaction_date <= max_d,
-                    )
-                )
-            ).all()
+        min_d = min(datetime.strptime(it.transaction_date, "%Y-%m-%d").date() for it in parsed.items)
+        max_d = max(datetime.strptime(it.transaction_date, "%Y-%m-%d").date() for it in parsed.items)
+        existing_stmt = select(Transaction).where(
+            Transaction.ledger_id == ledger.id,
+            Transaction.transaction_date >= min_d,
+            Transaction.transaction_date <= max_d,
         )
-        existing_signatures = {
-            (
-                t.transaction_date,
-                (t.payee or "").strip(),
-                Decimal(str(t.amount)),
-                str(t.type.value if hasattr(t.type, "value") else t.type).lower(),
+        existing = [fingerprint_of(t) for t in (await db.exec(existing_stmt)).all()]
+        dismissed_stmt = select(DismissedTransaction).where(
+            DismissedTransaction.ledger_id == ledger.id,
+            DismissedTransaction.transaction_date >= min_d,
+            DismissedTransaction.transaction_date <= max_d,
+        )
+        dismissed = [
+            Fingerprint(
+                transaction_date=d.transaction_date,
+                type=d.type,
+                amount=Decimal(d.amount),
+                payee=d.payee,
+                balance=None if d.balance is None else Decimal(d.balance),
             )
-            for t in existing_txns
-        }
-    else:
-        existing_signatures = set()
+            for d in (await db.exec(dismissed_stmt)).all()
+        ]
+    matcher = DuplicateMatcher(existing, dismissed)
 
     items: list[StatementItemPreview] = []
     for it in parsed.items:
         t_date = datetime.strptime(it.transaction_date, "%Y-%m-%d").date()
         t_amt = Decimal(str(round(it.amount, 2)))
         txn_type = TransactionType.INCOME if it.type == "income" else TransactionType.EXPENSE
-        sig = (t_date, it.payee.strip(), t_amt, str(txn_type.value).lower())
-        is_dup = sig in existing_signatures
+        reason = matcher.classify(
+            Fingerprint(
+                transaction_date=t_date,
+                type=txn_type,
+                amount=t_amt,
+                payee=it.payee,
+                balance=memo_balance(it.memo),
+            )
+        )
 
         items.append(
             StatementItemPreview(
@@ -115,8 +127,9 @@ async def parse_statement(
                 category_name=it.suggested_category_name,
                 card_name=it.card_name,
                 approval_no=it.approval_no,
-                is_duplicate=is_dup,
-                is_selected=not is_dup,  # Default uncheck duplicates
+                is_duplicate=reason is not None,
+                duplicate_reason=reason,
+                is_selected=reason is None,  # Default uncheck duplicates
             )
         )
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -176,3 +176,88 @@ def find_internal_transfer_pairs(txns: list[Transaction], members: set[str]) -> 
                 pairs.append(TransferPair(expense=exp, income=inc))
                 break
     return pairs
+
+
+def memo_balance(memo: str | None) -> Decimal | None:
+    m = _BALANCE_RE.search(memo or "")
+    return Decimal(m.group(1).replace(",", "")) if m else None
+
+
+def _payee_key(payee: str | None) -> str:
+    return re.sub(r"[^가-힣a-z0-9]", "", (payee or "").lower())
+
+
+@dataclass
+class Fingerprint:
+    """What identifies one bank transaction across imports, notifications and manual entry."""
+
+    transaction_date: date
+    type: TransactionType
+    amount: Decimal
+    payee: str | None
+    balance: Decimal | None
+
+
+class DuplicateMatcher:
+    """Decides whether an incoming row is already in the ledger (or was deliberately removed).
+
+    - With a running balance (토스 등 은행 내역) the row is identified by date + type + amount +
+      balance-after. One account has exactly one balance at that moment, so this survives
+      differences in how the description was written and never merges two real purchases.
+    - Without a balance (카드 명세서, 수기 입력) it falls back to date + type + amount + description.
+    - Matching is one-to-one: two identical rows in the file only consume two existing rows, so a
+      genuine second purchase of the same amount on the same day is still imported.
+    """
+
+    def __init__(self, existing: list[Fingerprint], dismissed: list[Fingerprint]):
+        self._pools = {"existing": self._index(existing), "dismissed": self._index(dismissed)}
+
+    @staticmethod
+    def _index(rows: list[Fingerprint]) -> dict[str, dict[tuple, list[Fingerprint]]]:
+        by_balance: dict[tuple, list[Fingerprint]] = defaultdict(list)
+        by_payee: dict[tuple, list[Fingerprint]] = defaultdict(list)
+        for r in rows:
+            base = (r.transaction_date, r.type, r.amount)
+            if r.balance is not None:
+                by_balance[(*base, r.balance)].append(r)
+            by_payee[(*base, _payee_key(r.payee))].append(r)
+        return {"balance": by_balance, "payee": by_payee}
+
+    def _take(self, pool: dict[str, dict[tuple, list[Fingerprint]]], row: Fingerprint) -> bool:
+        base = (row.transaction_date, row.type, row.amount)
+        candidates: list[Fingerprint]
+        if row.balance is not None:
+            candidates = pool["balance"].get((*base, row.balance), [])
+            if not candidates:
+                # An existing row with a different balance is a different transaction; only rows
+                # stored without a balance (manual entry, notification) may still be the same one.
+                candidates = [
+                    r for r in pool["payee"].get((*base, _payee_key(row.payee)), []) if r.balance is None
+                ]
+        else:
+            candidates = pool["payee"].get((*base, _payee_key(row.payee)), [])
+        if not candidates:
+            return False
+        hit = candidates[0]
+        hit_base = (hit.transaction_date, hit.type, hit.amount)
+        if hit.balance is not None:
+            pool["balance"][(*hit_base, hit.balance)].remove(hit)
+        pool["payee"][(*hit_base, _payee_key(hit.payee))].remove(hit)
+        return True
+
+    def classify(self, row: Fingerprint) -> str | None:
+        """Return "existing", "dismissed" or None (new)."""
+        for reason in ("existing", "dismissed"):
+            if self._take(self._pools[reason], row):
+                return reason
+        return None
+
+
+def fingerprint_of(t: Transaction) -> Fingerprint:
+    return Fingerprint(
+        transaction_date=t.transaction_date,
+        type=t.type,
+        amount=Decimal(t.amount),
+        payee=t.payee,
+        balance=memo_balance(t.memo),
+    )

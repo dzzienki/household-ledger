@@ -39,7 +39,6 @@ export default function StatementImportScreen() {
     enabled: !!ledgerId,
   });
   const categories = categoriesQuery.data ?? [];
-  const expenseCategories = categories.filter((c) => c.type === 'expense');
 
   // 파일 파싱 mutation
   const parseMutation = useMutation({
@@ -316,7 +315,9 @@ export default function StatementImportScreen() {
                   </Text>
                   {item.is_duplicate && (
                     <View style={styles.dupBadge}>
-                      <Text style={styles.dupBadgeText}>⚠️ 기존 거래 있음</Text>
+                      <Text style={styles.dupBadgeText}>
+                        {item.duplicate_reason === 'dismissed' ? '🔁 정리한 내부 이체' : '⚠️ 기존 거래 있음'}
+                      </Text>
                     </View>
                   )}
                 </View>
@@ -367,16 +368,18 @@ export default function StatementImportScreen() {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>카테고리 선택</Text>
             <ScrollView style={{ maxHeight: 320 }}>
-              {expenseCategories.map((c) => (
-                <Pressable
-                  key={c.id}
-                  style={styles.catOption}
-                  onPress={() => changeItemCategory(c)}
-                >
-                  <View style={[styles.catColorDot, { backgroundColor: c.color }]} />
-                  <Text style={styles.catOptionText}>{c.name}</Text>
-                </Pressable>
-              ))}
+              {categories
+                .filter((c) => c.type === (items[activeCategoryModalIndex ?? -1]?.type ?? 'expense'))
+                .map((c) => (
+                  <Pressable
+                    key={c.id}
+                    style={styles.catOption}
+                    onPress={() => changeItemCategory(c)}
+                  >
+                    <View style={[styles.catColorDot, { backgroundColor: c.color }]} />
+                    <Text style={styles.catOptionText}>{c.name}</Text>
+                  </Pressable>
+                ))}
             </ScrollView>
           </View>
         </Pressable>
