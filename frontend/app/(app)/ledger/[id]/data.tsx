@@ -345,7 +345,7 @@ export default function DataScreen() {
       <View style={[styles.card, styles.actionCard]}>
         <Text style={styles.cardTitle}>미분류 거래 일괄 자동 분류 및 세분화</Text>
         <Text style={styles.cardHint}>
-          수입/지출 방향을 먼저 교정한 뒤, 미분류·기타 거래와 유형이 맞지 않는 카테고리(예: 지출인데 &apos;급여&apos;)를 규칙과 AI로 다시 분류합니다. 직접 지정한 카테고리는 바꾸지 않습니다.
+          미분류·기타 거래와 유형이 맞지 않는 카테고리(예: 지출인데 &apos;급여&apos;)를 규칙과 AI로 다시 분류합니다. 직접 지정한 카테고리는 바꾸지 않습니다.
         </Text>
         <Pressable
           style={[styles.button, styles.successButton, categorizing && { opacity: 0.6 }]}

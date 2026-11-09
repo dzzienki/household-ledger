@@ -291,4 +291,5 @@ export interface StatementParseResponse {
 export interface StatementImportResponse {
   imported_count: number;
   total_amount: number;
+  skipped_count?: number;
 }

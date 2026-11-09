@@ -16,7 +16,7 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -76,12 +76,18 @@ def _clean_amount(val: Any) -> float | None:
     if val is None:
         return None
     s = str(val).strip().replace(",", "").replace("원", "").replace("KRW", "").replace("$", "").replace(" ", "")
+    # Unicode minus/dashes and accounting-style "(1,000)" both mean a negative amount.
+    s = s.replace("\u2212", "-").replace("\u2013", "-").replace("\u2014", "-")
+    negative = s.startswith("(") and s.endswith(")")
+    if negative:
+        s = s[1:-1]
     if not s or s == "-":
         return None
     try:
-        return float(s)
+        v = float(s)
     except ValueError:
         return None
+    return -v if negative else v
 
 
 def _normalize_date(val: Any) -> str | None:
@@ -92,6 +98,11 @@ def _normalize_date(val: Any) -> str | None:
     s = str(val).strip()
     if not s:
         return None
+
+    # Excel serial date (e.g. 45962 or 45962.375) when the sheet is read without date styles
+    m = re.match(r"^(\d{5})(?:\.\d+)?$", s)
+    if m and 20000 <= int(m.group(1)) <= 80000:
+        return (date(1899, 12, 30) + timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d")
 
     # Match YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD
     m = re.match(r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", s)
@@ -193,14 +204,18 @@ def _find_header_and_map(rows: list[list[Any]]) -> tuple[int, dict[str, int]] | 
     return None
 
 
-def _is_summary_row(row_strs: list[str]) -> bool:
-    joined = "".join(row_strs)
-    summary_markers = ["소계", "총합계", "총 합계", "합계", "총 건수", "이용 소계", "기본정보", "고객님이 요청하신"]
-    return any(marker in joined for marker in summary_markers)
+_SUMMARY_LABELS = {"소계", "합계", "총합계", "총계", "이용소계", "당월소계", "총건수", "합계금액"}
+
+
+def _is_summary_row(payee_cell: str) -> bool:
+    """A totals row puts its label where the merchant would be; a real transaction whose memo merely
+    mentions "합계" (e.g. "10월 관리비 합계") must not be dropped."""
+    return payee_cell.replace(" ", "") in _SUMMARY_LABELS
 
 
 # Statement noise that must not influence keyword matching (e.g. "잔액 1,234원", "적요: ").
 _NOISE_RE = re.compile(r"잔액\s*-?[\d,]+\s*원|적요\s*:|승인취소")
+_NOT_A_PERSON = ["통장", "계좌", "생활", "관리", "공과", "모임", "저축", "적금", "예금", "카드", "비상"]
 _MEMBER_SUFFIX_RE = re.compile(r"\((?:모임통장|모임원|송금|입금)\)")
 
 # Ordered rules: the first matching group wins, so specific groups come before broad ones.
@@ -313,8 +328,16 @@ _EXPENSE_RULES: list[tuple[list[str], list[str]]] = [
 ]
 
 
+# Words that contain a category keyword by accident: 이자카야 ⊃ 이자, 주식회사 ⊃ 주식,
+# 예금주 ⊃ 예금, 스마트 ⊃ 마트.
+_FALSE_FRIENDS = ["이자카야", "주식회사", "예금주", "스마트"]
+
+
 def _normalize_corpus(text: str) -> str:
-    return _NOISE_RE.sub(" ", str(text or "")).lower()
+    out = _NOISE_RE.sub(" ", str(text or "")).lower()
+    for w in _FALSE_FRIENDS:
+        out = out.replace(w, " ")
+    return out
 
 
 def _kw_match(text: str, kw: str) -> bool:
@@ -395,8 +418,36 @@ def household_member_names(texts: list[str], extra: list[str] | None = None) -> 
     found = {n.strip() for n in (extra or []) if n and n.strip()}
     for t in texts:
         for m in re.finditer(r"([가-힣]{2,4})\((?:모임통장|모임원)\)", t or ""):
-            found.add(m.group(1))
+            name = m.group(1)
+            # "허브통장(모임통장)" is an account label, not a person.
+            if not any(w in name for w in _NOT_A_PERSON):
+                found.add(name)
     return found
+
+
+def _is_numeric_column(rows: list[list[Any]], col: int) -> bool:
+    cells = [_clean_str(r[col]) for r in rows if col < len(r) and _clean_str(r[col]) not in ("", "-")]
+    if not cells:
+        return False
+    numeric = sum(1 for c in cells if _clean_amount(c) is not None)
+    return numeric >= len(cells) * 0.8
+
+
+def _is_running_balance(rows: list[list[Any]], amount_col: int, balance_col: int) -> bool:
+    """True when the balance column is an account balance that moves by each row's amount.
+
+    Card statements can also carry a "결제후잔액" column (remaining installment balance) whose
+    values do not follow the row amounts, so the column name alone is not enough.
+    """
+    pairs = []
+    for r in rows:
+        amt = _clean_amount(r[amount_col]) if amount_col < len(r) else None
+        bal = _clean_amount(r[balance_col]) if balance_col < len(r) else None
+        if amt is not None and bal is not None:
+            pairs.append((amt, bal))
+    links = [abs(abs(b1 - b2) - abs(a1)) < 0.5 or abs(abs(b1 - b2) - abs(a2)) < 0.5
+             for (a1, b1), (a2, b2) in zip(pairs, pairs[1:])]
+    return bool(links) and sum(links) >= len(links) * 0.6
 
 
 def _parse_raw_table(
@@ -412,6 +463,14 @@ def _parse_raw_table(
         return StatementParseResult(card_company=card_company, total_count=0, total_amount=0.0, items=[])
 
     header_idx, mapping = matched
+    # Header keywords are loose ("출금" also matches "출금계좌", "입금" matches "입금예정일"), so a
+    # money column only counts if its cells actually hold amounts.
+    for key in ("amount", "deposit", "withdrawal", "balance"):
+        col = mapping.get(key)
+        if col is not None and not _is_numeric_column(rows[header_idx + 1:], col):
+            del mapping[key]
+    if "amount" not in mapping and "deposit" not in mapping and "withdrawal" not in mapping:
+        return StatementParseResult(card_company=card_company, total_count=0, total_amount=0.0, items=[])
     date_col = mapping["date"]
     payee_col = mapping["payee"]
     amount_col = mapping.get("amount")
@@ -435,13 +494,22 @@ def _parse_raw_table(
     # Bank exports (토스 etc.) have a running balance and carry the direction in the sign of the
     # amount (or in separate 입금/출금 columns). Card statements list charges as positive amounts,
     # with refunds/cancellations negative or flagged as "취소".
-    is_bank_export = (
-        deposit_col is not None or withdrawal_col is not None or (balance_col is not None and amount_col is not None)
+    balance_header = (
+        _clean_str(rows[header_idx][balance_col]).replace(" ", "") if balance_col is not None else ""
+    )
+    # Card statements' "결제후잔액" / "할부잔액" is the unpaid installment, not an account balance.
+    card_style_balance = any(w in balance_header for w in ["결제", "할부", "청구"]) or bool(
+        card_company and card_company.endswith("카드")
+    )
+    is_bank_export = deposit_col is not None or withdrawal_col is not None or (
+        balance_col is not None
+        and amount_col is not None
+        and (not card_style_balance or _is_running_balance(data_rows, amount_col, balance_col))
     )
 
     for r in data_rows:
         row_strs = [_clean_str(c) for c in r]
-        if not any(row_strs) or _is_summary_row(row_strs):
+        if not any(row_strs):
             continue
 
         raw_date = r[date_col] if date_col < len(r) else None
@@ -450,6 +518,8 @@ def _parse_raw_table(
             continue
 
         raw_payee = _clean_str(r[payee_col]) if payee_col < len(r) else ""
+        if _is_summary_row(raw_payee):
+            continue
         user_memo = _clean_str(r[memo_col]) if memo_col is not None and memo_col < len(r) else ""
 
         if not raw_payee and not user_memo:

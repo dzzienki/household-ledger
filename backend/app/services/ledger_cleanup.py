@@ -198,6 +198,14 @@ class Fingerprint:
     balance: Decimal | None
 
 
+def _balance_key(f: Fingerprint) -> tuple:
+    return (f.transaction_date, f.amount, f.balance)
+
+
+def _payee_key_of(f: Fingerprint) -> tuple:
+    return (f.transaction_date, f.type, f.amount, _payee_key(f.payee))
+
+
 class DuplicateMatcher:
     """Decides whether an incoming row is already in the ledger (or was deliberately removed).
 
@@ -217,32 +225,33 @@ class DuplicateMatcher:
         by_balance: dict[tuple, list[Fingerprint]] = defaultdict(list)
         by_payee: dict[tuple, list[Fingerprint]] = defaultdict(list)
         for r in rows:
-            base = (r.transaction_date, r.type, r.amount)
             if r.balance is not None:
-                by_balance[(*base, r.balance)].append(r)
-            by_payee[(*base, _payee_key(r.payee))].append(r)
+                by_balance[_balance_key(r)].append(r)
+            by_payee[_payee_key_of(r)].append(r)
         return {"balance": by_balance, "payee": by_payee}
 
     def _take(self, pool: dict[str, dict[tuple, list[Fingerprint]]], row: Fingerprint) -> bool:
-        base = (row.transaction_date, row.type, row.amount)
         candidates: list[Fingerprint]
         if row.balance is not None:
-            candidates = pool["balance"].get((*base, row.balance), [])
+            same_balance = pool["balance"].get(_balance_key(row), [])
+            # Same direction is the normal case. A row with the opposite direction only counts when
+            # the description matches too: that is a legacy import stored with the wrong direction,
+            # not a different account that happens to end on the same balance.
+            candidates = [r for r in same_balance if r.type == row.type] or [
+                r for r in same_balance if _payee_key(r.payee) == _payee_key(row.payee)
+            ]
             if not candidates:
                 # An existing row with a different balance is a different transaction; only rows
                 # stored without a balance (manual entry, notification) may still be the same one.
-                candidates = [
-                    r for r in pool["payee"].get((*base, _payee_key(row.payee)), []) if r.balance is None
-                ]
+                candidates = [r for r in pool["payee"].get(_payee_key_of(row), []) if r.balance is None]
         else:
-            candidates = pool["payee"].get((*base, _payee_key(row.payee)), [])
+            candidates = pool["payee"].get(_payee_key_of(row), [])
         if not candidates:
             return False
         hit = candidates[0]
-        hit_base = (hit.transaction_date, hit.type, hit.amount)
         if hit.balance is not None:
-            pool["balance"][(*hit_base, hit.balance)].remove(hit)
-        pool["payee"][(*hit_base, _payee_key(hit.payee))].remove(hit)
+            pool["balance"][_balance_key(hit)].remove(hit)
+        pool["payee"][_payee_key_of(hit)].remove(hit)
         return True
 
     def classify(self, row: Fingerprint) -> str | None:

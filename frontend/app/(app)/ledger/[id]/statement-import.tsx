@@ -97,7 +97,10 @@ export default function StatementImportScreen() {
       queryClient.invalidateQueries({ queryKey: ['summary', ledgerId] });
       queryClient.invalidateQueries({ queryKey: ['stats'] });
       queryClient.invalidateQueries({ queryKey: ['items'] });
-      notify('등록 완료', `총 ${res.imported_count}건의 소비가 가계부에 성공적으로 등록되었습니다!`);
+      const skipped = res.skipped_count
+        ? `\n(이미 등록돼 있던 ${res.skipped_count}건은 중복 방지를 위해 건너뛰었습니다)`
+        : '';
+      notify('등록 완료', `총 ${res.imported_count}건의 거래가 가계부에 등록되었습니다.${skipped}`);
       router.replace(`/(app)/ledger/${ledgerId}`);
     },
     onError: (err) => {
@@ -316,7 +319,7 @@ export default function StatementImportScreen() {
                   {item.is_duplicate && (
                     <View style={styles.dupBadge}>
                       <Text style={styles.dupBadgeText}>
-                        {item.duplicate_reason === 'dismissed' ? '🔁 정리한 내부 이체' : '⚠️ 기존 거래 있음'}
+                        {item.duplicate_reason === 'dismissed' ? '🔁 이전에 정리·삭제한 거래' : '⚠️ 기존 거래 있음'}
                       </Text>
                     </View>
                   )}

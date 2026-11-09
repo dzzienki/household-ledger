@@ -161,10 +161,35 @@ async def import_statements(
 
     created_txns = []
     total_amount = Decimal(0)
+    skipped = 0
 
-    for it in payload.items:
-        if not it.is_selected:
-            continue
+    # The preview may be stale (another import ran meanwhile) or the request may be submitted
+    # twice. Rows the preview judged new are checked again so they cannot be inserted twice;
+    # rows the user knowingly selected despite a duplicate warning are imported as asked.
+    selected = [it for it in payload.items if it.is_selected]
+    matcher = DuplicateMatcher([], [])
+    if selected:
+        min_d = min(it.transaction_date for it in selected)
+        max_d = max(it.transaction_date for it in selected)
+        existing_stmt = select(Transaction).where(
+            Transaction.ledger_id == ledger.id,
+            Transaction.transaction_date >= min_d,
+            Transaction.transaction_date <= max_d,
+        )
+        matcher = DuplicateMatcher([fingerprint_of(t) for t in (await db.exec(existing_stmt)).all()], [])
+
+    for it in selected:
+        if not it.is_duplicate:
+            fp = Fingerprint(
+                transaction_date=it.transaction_date,
+                type=it.type,
+                amount=it.amount,
+                payee=it.payee,
+                balance=memo_balance(it.memo),
+            )
+            if matcher.classify(fp) == "existing":
+                skipped += 1
+                continue
 
         cat_id = it.category_id if it.category_id in categories else None
 
@@ -188,4 +213,5 @@ async def import_statements(
     return StatementImportResponse(
         imported_count=len(created_txns),
         total_amount=total_amount,
+        skipped_count=skipped,
     )

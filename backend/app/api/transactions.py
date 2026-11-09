@@ -324,7 +324,9 @@ def _transfer_item(t: Transaction) -> InternalTransferItem:
     )
 
 
-async def _delete_as_dismissed(db: AsyncSession, txns: list[Transaction]) -> None:
+async def _delete_as_dismissed(
+    db: AsyncSession, txns: list[Transaction], reason: str = "internal_transfer"
+) -> None:
     """Deletes transactions but keeps their fingerprint so a later statement re-import skips them."""
     for t in txns:
         db.add(
@@ -335,6 +337,7 @@ async def _delete_as_dismissed(db: AsyncSession, txns: list[Transaction]) -> Non
                 transaction_date=t.transaction_date,
                 balance=memo_balance(t.memo),
                 payee=t.payee,
+                reason=reason,
             )
         )
         await db.delete(t)
@@ -489,7 +492,7 @@ async def batch_auto_categorize_transactions(
     force_all: bool = Query(default=False, description="Re-evaluate all transactions even if already categorized"),
     reclassify_misc: bool = Query(default=True, description="Also re-evaluate transactions currently in 기타 지출 / 기타 수입 to refine them"),
     deduplicate_transfers: bool = Query(default=False, description="Automatically remove detected internal transfer pairs"),
-    repair_types: bool = Query(default=True, description="Fix income/expense direction from the statement balance history first"),
+    repair_types: bool = Query(default=False, description="Fix income/expense direction from the statement balance history first"),
 ) -> BatchCategorizeResponse:
     from app.services.ai import is_ai_enabled, suggest_categories_batch
     from app.services.categories import ensure_standard_categories
@@ -696,6 +699,11 @@ async def delete_transaction(
     txn = await db.get(Transaction, transaction_id)
     if txn is None or txn.ledger_id != ledger.id:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    if memo_balance(txn.memo) is not None:
+        # A bank-statement row the user removed on purpose should not come back on re-import.
+        # (Bulk delete is used to undo a whole import, so it does not leave fingerprints.)
+        await _delete_as_dismissed(db, [txn], reason="deleted")
+        return
     await db.delete(txn)
     await db.commit()
 

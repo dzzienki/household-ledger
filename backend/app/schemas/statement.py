@@ -40,3 +40,5 @@ class StatementImportRequest(BaseModel):
 class StatementImportResponse(BaseModel):
     imported_count: int
     total_amount: Decimal
+    # Rows skipped because they were already in the ledger (double submit / stale preview)
+    skipped_count: int = 0
