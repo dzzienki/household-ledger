@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, G, Path, Rect } from 'react-native-svg';
 
@@ -126,7 +126,20 @@ export interface PieDatum {
   value: number;
 }
 
-export function CategoryPieChart({ data, currency = 'KRW' }: { data: PieDatum[]; currency?: string }) {
+export function CategoryPieChart({
+  data,
+  currency = 'KRW',
+  expandedId = null,
+  onToggle,
+  renderExpanded,
+}: {
+  data: PieDatum[];
+  currency?: string;
+  /** Category row currently expanded to show its transactions. */
+  expandedId?: string | null;
+  onToggle?: (id: string) => void;
+  renderExpanded?: (id: string) => ReactNode;
+}) {
   const size = 180;
   const padding = 8;
   const radius = (size - padding * 2) / 2; // 82
@@ -198,20 +211,27 @@ export function CategoryPieChart({ data, currency = 'KRW' }: { data: PieDatum[];
           .map((d) => {
             const pct = ((d.value / total) * 100).toFixed(1);
             const barPct = Math.min(100, Math.max(0, (d.value / total) * 100));
+            const expanded = expandedId === d.id;
             return (
               <View key={d.id} style={styles.categoryItem}>
-                <View style={styles.categoryHeader}>
+                <Pressable
+                  style={styles.categoryHeader}
+                  onPress={onToggle ? () => onToggle(d.id) : undefined}
+                  disabled={!onToggle}
+                  hitSlop={4}
+                >
                   <View style={styles.categoryLeft}>
                     <View style={[styles.categoryDot, { backgroundColor: d.color || '#9CA3AF' }]} />
                     <Text style={styles.categoryName} numberOfLines={1}>
                       {d.label}
                     </Text>
+                    {onToggle && <Text style={styles.categoryChevron}>{expanded ? '▾' : '▸'}</Text>}
                   </View>
                   <View style={styles.categoryRight}>
                     <Text style={styles.categoryAmount}>{formatCurrency(d.value, currency)}</Text>
                     <Text style={styles.categoryPercent}>{pct}%</Text>
                   </View>
-                </View>
+                </Pressable>
                 <View style={styles.progressBarBg}>
                   <View
                     style={[
@@ -220,6 +240,7 @@ export function CategoryPieChart({ data, currency = 'KRW' }: { data: PieDatum[];
                     ]}
                   />
                 </View>
+                {expanded && renderExpanded?.(d.id)}
               </View>
             );
           })}
@@ -303,6 +324,7 @@ const styles = StyleSheet.create({
   categoryLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, marginRight: 8 },
   categoryDot: { width: 10, height: 10, borderRadius: 5 },
   categoryName: { fontSize: 14, fontWeight: '600', color: '#1F2937', flexShrink: 1 },
+  categoryChevron: { fontSize: 12, color: '#9CA3AF', marginLeft: 6 },
   categoryRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   categoryAmount: { fontSize: 14, fontWeight: '700', color: '#111827' },
   categoryPercent: { fontSize: 12, color: '#6B7280', fontWeight: '600', minWidth: 42, textAlign: 'right' },

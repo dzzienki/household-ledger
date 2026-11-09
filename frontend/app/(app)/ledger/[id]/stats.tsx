@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { CategoryPieChart, MonthlyBarChart, type MonthlyDatum, type PieDatum } from '@/components/charts';
 import { api } from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
-import type { Ledger, TransactionType } from '@/lib/types';
+import type { Ledger, Transaction, TransactionType } from '@/lib/types';
 
 interface MonthlyTotal {
   year: number;
@@ -33,6 +33,9 @@ export default function StatsScreen() {
   const [year, setYear] = useState(CURRENT_YEAR);
   const [selectedMonth, setSelectedMonth] = useState<number | null>(CURRENT_MONTH);
   const [pieType, setPieType] = useState<TransactionType>('expense');
+  // Expanded category row, remembered together with the scope it was opened in so it
+  // collapses automatically when the period or income/expense tab changes.
+  const [expanded, setExpanded] = useState<{ id: string; scope: string } | null>(null);
 
   const ledgerQuery = useQuery({
     queryKey: ['ledger', ledgerId],
@@ -66,6 +69,8 @@ export default function StatsScreen() {
   });
 
   const currency = ledgerQuery.data?.currency ?? 'KRW';
+  const detailScope = `${pieType}${categoryParams}`;
+  const expandedId = expanded?.scope === detailScope ? expanded.id : null;
 
   const monthlyData: MonthlyDatum[] = (monthlyQuery.data ?? []).map((m) => ({
     month: m.month,
@@ -260,10 +265,97 @@ export default function StatsScreen() {
         {categoryQuery.isLoading ? (
           <ActivityIndicator style={{ marginVertical: 40 }} />
         ) : (
-          <CategoryPieChart data={pieData} currency={currency} />
+          <CategoryPieChart
+            data={pieData}
+            currency={currency}
+            expandedId={expandedId}
+            onToggle={(id) =>
+              setExpanded(expandedId === id ? null : { id, scope: detailScope })
+            }
+            renderExpanded={(id) => (
+              <CategoryTransactions
+                ledgerId={ledgerId!}
+                categoryId={id.startsWith('null-') ? null : id}
+                type={pieType}
+                periodParams={categoryParams}
+                currency={currency}
+              />
+            )}
+          />
         )}
       </View>
     </ScrollView>
+  );
+}
+
+function shortDate(iso: string): string {
+  const [, m, d] = iso.split('-');
+  return `${Number(m)}/${Number(d)}`;
+}
+
+/** Splits the stored memo into the parts worth showing (토스 메모, 적요 ...), dropping balance noise. */
+function memoParts(t: Transaction): string[] {
+  if (!t.memo) return [];
+  const payee = (t.payee ?? '').trim();
+  return t.memo
+    .split(' | ')
+    .map((p) => p.trim())
+    .filter((p) => p && p !== payee && !/^잔액\s/.test(p));
+}
+
+function CategoryTransactions({
+  ledgerId,
+  categoryId,
+  type,
+  periodParams,
+  currency,
+}: {
+  ledgerId: string;
+  categoryId: string | null;
+  type: TransactionType;
+  periodParams: string;
+  currency: string;
+}) {
+  const router = useRouter();
+  const filter = categoryId ? `category_id=${categoryId}` : 'uncategorized=true';
+  const query = useQuery({
+    queryKey: ['transactions', ledgerId, { categoryId, type, periodParams }],
+    queryFn: () =>
+      api<Transaction[]>(
+        `/api/ledgers/${ledgerId}/transactions?type=${type}&${filter}${periodParams}&limit=500`,
+      ),
+  });
+
+  if (query.isLoading) return <ActivityIndicator style={{ marginVertical: 12 }} />;
+  if (query.isError) return <Text style={styles.detailEmpty}>내역을 불러오지 못했습니다.</Text>;
+  const txns = query.data ?? [];
+  if (txns.length === 0) return <Text style={styles.detailEmpty}>내역이 없습니다.</Text>;
+
+  return (
+    <View style={styles.detailBox}>
+      {txns.map((t) => {
+        const parts = memoParts(t);
+        return (
+          <Pressable
+            key={t.id}
+            style={styles.detailRow}
+            onPress={() => router.push(`/(app)/ledger/${ledgerId}/transaction/${t.id}`)}
+          >
+            <View style={styles.detailMain}>
+              <Text style={styles.detailDate}>{shortDate(t.transaction_date)}</Text>
+              <Text style={styles.detailPayee} numberOfLines={2}>
+                {t.payee || '(내용 없음)'}
+              </Text>
+              <Text style={[styles.detailAmount, { color: type === 'income' ? '#16A34A' : '#DC2626' }]}>
+                {type === 'income' ? '+' : '-'}
+                {formatCurrency(t.amount, currency)}
+              </Text>
+            </View>
+            {parts.length > 0 && <Text style={styles.detailMemo}>{parts.join(' · ')}</Text>}
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -371,4 +463,25 @@ const styles = StyleSheet.create({
   toggleIncomeActive: { backgroundColor: '#16A34A' },
   toggleText: { fontWeight: '600', color: '#6B7280', fontSize: 13 },
   toggleTextActive: { color: '#fff', fontWeight: '700' },
+
+  // 카테고리 상세 내역
+  detailBox: {
+    marginTop: 10,
+    borderRadius: 8,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  detailRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E5E7EB',
+  },
+  detailMain: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  detailDate: { fontSize: 12, color: '#6B7280', minWidth: 40 },
+  detailPayee: { flex: 1, fontSize: 13, fontWeight: '600', color: '#1F2937' },
+  detailAmount: { fontSize: 13, fontWeight: '700' },
+  detailMemo: { fontSize: 12, color: '#6B7280', marginTop: 4, marginLeft: 48 },
+  detailEmpty: { fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginVertical: 12 },
 });
