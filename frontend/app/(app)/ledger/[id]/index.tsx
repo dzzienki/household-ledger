@@ -216,7 +216,20 @@ export default function LedgerDetailScreen() {
         }}
       />
 
-      <View style={styles.monthBar}>
+      <FlatList
+        data={txns}
+        keyExtractor={(t) => t.id}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: 100 }}
+        ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+        refreshing={txnQuery.isRefetching || summaryQuery.isRefetching}
+        onRefresh={() => {
+          txnQuery.refetch();
+          summaryQuery.refetch();
+        }}
+        ListHeaderComponent={
+          <>
+            <View style={styles.monthBar}>
         <Pressable
           style={styles.monthArrow}
           onPress={() => shiftMonth(-1)}
@@ -519,23 +532,10 @@ export default function LedgerDetailScreen() {
         <QuickButton label="태그" onPress={() => router.push(`/(app)/ledger/${id}/tags`)} />
         <QuickButton label="데이터" onPress={() => router.push(`/(app)/ledger/${id}/data`)} />
       </View>
-
-      {txnQuery.isLoading ? (
-        <View style={[styles.center, { flex: 1 }]}>
-          <ActivityIndicator />
-        </View>
-      ) : (
-        <FlatList
-          data={txns}
-          keyExtractor={(t) => t.id}
-          contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
-          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-          refreshing={txnQuery.isRefetching || summaryQuery.isRefetching}
-          onRefresh={() => {
-            txnQuery.refetch();
-            summaryQuery.refetch();
-          }}
-          renderItem={({ item }) => {
+      <View style={{ height: 8 }} />
+    </>
+  }
+  renderItem={({ item }) => {
             const category = item.category_id ? categoriesById.get(item.category_id) : null;
             return (
               <Pressable
@@ -578,16 +578,21 @@ export default function LedgerDetailScreen() {
             );
           }}
           ListEmptyComponent={
-            <Text style={styles.empty}>
-              {filterActive
-                ? '검색 조건에 맞는 거래가 없습니다'
-                : monthMode
-                  ? `${monthLabel}에 거래가 없습니다`
-                  : '아직 거래가 없습니다'}
-            </Text>
+            txnQuery.isLoading ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#3B82F6" />
+              </View>
+            ) : (
+              <Text style={styles.empty}>
+                {filterActive
+                  ? '검색 조건에 맞는 거래가 없습니다'
+                  : monthMode
+                    ? `${monthLabel}에 거래가 없습니다`
+                    : '아직 거래가 없습니다'}
+              </Text>
+            )
           }
         />
-      )}
 
       <Pressable
         style={styles.fab}
@@ -861,6 +866,7 @@ const styles = StyleSheet.create({
     padding: 14,
     backgroundColor: '#F9FAFB',
     borderRadius: 10,
+    marginHorizontal: 16,
   },
   rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   colorDot: { width: 12, height: 12, borderRadius: 6 },
@@ -872,7 +878,7 @@ const styles = StyleSheet.create({
   rowTag: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 1 },
   rowTagText: { fontSize: 10, fontWeight: '600' },
   amount: { fontSize: 15, fontWeight: '700' },
-  empty: { textAlign: 'center', color: '#9CA3AF', marginTop: 40 },
+  empty: { textAlign: 'center', color: '#9CA3AF', marginTop: 40, paddingHorizontal: 16 },
   fab: {
     position: 'absolute',
     bottom: 24,

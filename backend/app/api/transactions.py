@@ -305,9 +305,11 @@ async def bulk_delete_transactions(
     return BulkDeleteResponse(deleted_count=count, message=msg)
 
 
-INTERNAL_TRANSFER_KEYWORDS = [
+INTERNAL_OUTFLOW_KEYWORDS = ["(모임통장)", "모임통장", "허브통장", "내계좌간", "자동이체", "송금", "출금"]
+INTERNAL_INFLOW_KEYWORDS = ["생활비", "공과금", "수혈", "입금", "식비생활비", "보탬", "수급", "전환", "남은거"]
+GENERAL_INTERNAL_KEYWORDS = [
     "모임통장", "허브", "생활비", "공과금", "수혈", "최명준", "강유리",
-    "관리비통장", "내계좌", "자동이체", "송금", "이체", "급여", "월급", "보탬", "모은돈"
+    "관리비통장", "내계좌", "자동이체", "송금", "이체", "급여", "월급", "보탬", "모은돈", "식비생활비등"
 ]
 
 EXTERNAL_MERCHANT_KEYWORDS = [
@@ -329,31 +331,35 @@ async def _find_internal_transfer_pairs_for_ledger(
     )
     txns = list((await db.exec(stmt)).all())
 
-    expenses = [t for t in txns if t.type == TransactionType.EXPENSE]
-    incomes = [t for t in txns if t.type == TransactionType.INCOME]
-
-    matched_expense_ids: set[UUID] = set()
-    matched_income_ids: set[UUID] = set()
+    matched_ids: set[UUID] = set()
     pairs: list[dict[str, Any]] = []
 
+    def is_type(t: Transaction, t_type: str) -> bool:
+        val = t.type.value if hasattr(t.type, "value") else str(t.type)
+        return str(val).lower() == t_type.lower()
+
+    # Pass 1: Standard Expense vs Income matching
+    expenses = [t for t in txns if is_type(t, "expense")]
+    incomes = [t for t in txns if is_type(t, "income")]
+
     for exp in expenses:
-        if exp.id in matched_expense_ids:
+        if exp.id in matched_ids:
             continue
         exp_text = f"{exp.payee or ''} {exp.memo or ''}".lower().strip()
         if any(ek in exp_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
             continue
 
         for inc in incomes:
-            if inc.id in matched_income_ids:
+            if inc.id in matched_ids:
                 continue
             if exp.transaction_date == inc.transaction_date and exp.amount == inc.amount:
                 inc_text = f"{inc.payee or ''} {inc.memo or ''}".lower().strip()
                 if any(ek in inc_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
                     continue
 
-                if any(k in exp_text for k in INTERNAL_TRANSFER_KEYWORDS) or any(k in inc_text for k in INTERNAL_TRANSFER_KEYWORDS):
-                    matched_expense_ids.add(exp.id)
-                    matched_income_ids.add(inc.id)
+                if any(k in exp_text for k in GENERAL_INTERNAL_KEYWORDS) or any(k in inc_text for k in GENERAL_INTERNAL_KEYWORDS):
+                    matched_ids.add(exp.id)
+                    matched_ids.add(inc.id)
                     desc = f"{exp.payee or '출금'} ➔ {inc.payee or '입금'}"
                     pairs.append({
                         "pair_id": f"{exp.id}_{inc.id}",
@@ -378,6 +384,106 @@ async def _find_internal_transfer_pairs_for_ledger(
                         ),
                     })
                     break
+
+    # Pass 2: Legacy both-as-expense matching (handles statements imported before parser deposit fix)
+    unmatched = [t for t in txns if t.id not in matched_ids]
+    inflow_candidates: list[Transaction] = []
+    outflow_candidates: list[Transaction] = []
+    for t in unmatched:
+        t_text = f"{t.payee or ''} {t.memo or ''}".lower().strip()
+        if any(ek in t_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
+            continue
+        if any(ik in t_text for ik in INTERNAL_INFLOW_KEYWORDS):
+            inflow_candidates.append(t)
+        elif any(ok in t_text for ok in INTERNAL_OUTFLOW_KEYWORDS) or any(gk in t_text for gk in GENERAL_INTERNAL_KEYWORDS):
+            outflow_candidates.append(t)
+
+    for out_t in outflow_candidates:
+        if out_t.id in matched_ids:
+            continue
+        out_text = f"{out_t.payee or ''} {out_t.memo or ''}".lower().strip()
+
+        for in_t in inflow_candidates:
+            if in_t.id in matched_ids:
+                continue
+            if out_t.id == in_t.id:
+                continue
+            if out_t.transaction_date == in_t.transaction_date and out_t.amount == in_t.amount:
+                matched_ids.add(out_t.id)
+                matched_ids.add(in_t.id)
+                desc = f"{out_t.payee or '출금'} ➔ {in_t.payee or '입금'}"
+                pairs.append({
+                    "pair_id": f"{out_t.id}_{in_t.id}",
+                    "date": out_t.transaction_date,
+                    "amount": out_t.amount,
+                    "description": desc,
+                    "expense_txn": InternalTransferItem(
+                        id=out_t.id,
+                        type=out_t.type,
+                        amount=out_t.amount,
+                        transaction_date=out_t.transaction_date,
+                        payee=out_t.payee,
+                        memo=out_t.memo,
+                    ),
+                    "income_txn": InternalTransferItem(
+                        id=in_t.id,
+                        type=in_t.type,
+                        amount=in_t.amount,
+                        transaction_date=in_t.transaction_date,
+                        payee=in_t.payee,
+                        memo=in_t.memo,
+                    ),
+                })
+                break
+
+    # Pass 3: General internal keyword pairs on same date and same amount
+    remaining_unmatched = [t for t in unmatched if t.id not in matched_ids]
+    for i, t1 in enumerate(remaining_unmatched):
+        if t1.id in matched_ids:
+            continue
+        t1_text = f"{t1.payee or ''} {t1.memo or ''}".lower().strip()
+        if any(ek in t1_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
+            continue
+        if not any(k in t1_text for k in GENERAL_INTERNAL_KEYWORDS):
+            continue
+
+        for j, t2 in enumerate(remaining_unmatched):
+            if i >= j or t2.id in matched_ids:
+                continue
+            t2_text = f"{t2.payee or ''} {t2.memo or ''}".lower().strip()
+            if any(ek in t2_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
+                continue
+            if not any(k in t2_text for k in GENERAL_INTERNAL_KEYWORDS):
+                continue
+
+            if t1.transaction_date == t2.transaction_date and t1.amount == t2.amount:
+                matched_ids.add(t1.id)
+                matched_ids.add(t2.id)
+                desc = f"{t1.payee or '이체1'} ⇄ {t2.payee or '이체2'}"
+                pairs.append({
+                    "pair_id": f"{t1.id}_{t2.id}",
+                    "date": t1.transaction_date,
+                    "amount": t1.amount,
+                    "description": desc,
+                    "expense_txn": InternalTransferItem(
+                        id=t1.id,
+                        type=t1.type,
+                        amount=t1.amount,
+                        transaction_date=t1.transaction_date,
+                        payee=t1.payee,
+                        memo=t1.memo,
+                    ),
+                    "income_txn": InternalTransferItem(
+                        id=t2.id,
+                        type=t2.type,
+                        amount=t2.amount,
+                        transaction_date=t2.transaction_date,
+                        payee=t2.payee,
+                        memo=t2.memo,
+                    ),
+                })
+                break
+
     return pairs
 
 
