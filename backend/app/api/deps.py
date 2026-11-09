@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -10,24 +10,20 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.models import Ledger, LedgerMember, LedgerRole, User
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 DbDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def get_current_user(
     db: DbDep,
-    header_token: Annotated[str | None, Depends(oauth2_scheme)] = None,
-    query_token: Annotated[str | None, Query(alias="token")] = None,
+    token: Annotated[str, Depends(oauth2_scheme)],
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    token = header_token or query_token
-    if not token:
-        raise credentials_exception
     try:
         payload = decode_token(token)
         if payload.get("type") != "access":

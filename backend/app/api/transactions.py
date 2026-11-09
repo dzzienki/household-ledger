@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 

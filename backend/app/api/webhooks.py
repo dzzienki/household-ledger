@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -116,7 +116,7 @@ async def process_notification_webhook(
         )
 
     # Duplicate check: check if identical transaction was created in the last 3 minutes
-    three_mins_ago = datetime.utcnow() - timedelta(minutes=3)
+    three_mins_ago = datetime.now(UTC) - timedelta(minutes=3)
     existing_dup = (
         await db.exec(
             select(Transaction).where(
