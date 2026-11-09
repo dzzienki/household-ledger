@@ -57,7 +57,7 @@ export function TransactionFilterSheet({ visible, value, categories, tags, onCha
                       ...value,
                       type: t,
                       categoryId:
-                        t !== 'all' && value.categoryId
+                        t !== 'all' && value.categoryId && value.categoryId !== 'uncategorized'
                           ? categories.find((c) => c.id === value.categoryId)?.type === t
                             ? value.categoryId
                             : null
@@ -80,6 +80,20 @@ export function TransactionFilterSheet({ visible, value, categories, tags, onCha
               >
                 <Text style={[styles.chipText, value.categoryId === null && styles.chipTextActive]}>
                   전체
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.chip,
+                  { borderColor: '#9CA3AF', borderWidth: 1.5 },
+                  value.categoryId === 'uncategorized' && { backgroundColor: '#6B7280', borderColor: '#6B7280' },
+                ]}
+                onPress={() => onChange({ ...value, categoryId: value.categoryId === 'uncategorized' ? null : 'uncategorized' })}
+              >
+                <Text
+                  style={[styles.chipText, value.categoryId === 'uncategorized' && styles.chipTextActive]}
+                >
+                  미분류
                 </Text>
               </Pressable>
               {filteredCategories.map((c) => (

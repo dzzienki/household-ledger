@@ -177,6 +177,7 @@ async def list_transactions(
     membership: Annotated[tuple[Ledger, LedgerMember], Depends(get_ledger_membership)],
     type: TransactionType | None = None,
     category_id: UUID | None = None,
+    uncategorized: bool | None = Query(default=None, description="Filter for transactions with no category"),
     tag_id: UUID | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -190,7 +191,9 @@ async def list_transactions(
     stmt = select(Transaction).where(Transaction.ledger_id == ledger.id)
     if type is not None:
         stmt = stmt.where(Transaction.type == type)
-    if category_id is not None:
+    if uncategorized is True:
+        stmt = stmt.where(Transaction.category_id.is_(None))
+    elif category_id is not None:
         stmt = stmt.where(Transaction.category_id == category_id)
     if tag_id is not None:
         stmt = stmt.where(

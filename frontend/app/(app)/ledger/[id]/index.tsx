@@ -59,7 +59,11 @@ export default function LedgerDetailScreen() {
     const params = new URLSearchParams();
     if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
     if (filter.type !== 'all') params.set('type', filter.type);
-    if (filter.categoryId) params.set('category_id', filter.categoryId);
+    if (filter.categoryId === 'uncategorized') {
+      params.set('uncategorized', 'true');
+    } else if (filter.categoryId) {
+      params.set('category_id', filter.categoryId);
+    }
     if (filter.tagId) params.set('tag_id', filter.tagId);
     if (monthMode) {
       const iso = (d: Date) =>
