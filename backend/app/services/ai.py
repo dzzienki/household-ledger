@@ -280,7 +280,10 @@ def suggest_categories_batch(
 
     category_map = {str(c.id): c for c in categories}
     cat_by_name = {c.name.strip(): c.id for c in categories}
-    catalog_lines = "\n".join(f"- {c.name} (id: {c.id}, type: {c.type.value})" for c in categories)
+    catalog_lines = "\n".join(
+        f"- {c.name} (id: {c.id}, type: {c.type.value if hasattr(c.type, 'value') else str(c.type)})"
+        for c in categories
+    )
 
     system = (
         "You are an assistant that classifies Korean household ledger transactions into "

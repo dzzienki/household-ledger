@@ -340,7 +340,8 @@ async def batch_auto_categorize_transactions(
     remaining_txns: list[Transaction] = []
     for txn in txns:
         corpus = f"{txn.payee or ''} {txn.memo or ''}".strip()
-        cat_id, cat_name = _guess_category_by_rules(corpus, categories, txn_type=txn.type.value)
+        txn_type_str = txn.type.value if hasattr(txn.type, "value") else str(txn.type)
+        cat_id, cat_name = _guess_category_by_rules(corpus, categories, txn_type=txn_type_str)
         if cat_id:
             txn.category_id = cat_id
             rules_count += 1
@@ -362,7 +363,7 @@ async def batch_auto_categorize_transactions(
             payload = [
                 {
                     "id": str(t.id),
-                    "type": t.type.value,
+                    "type": t.type.value if hasattr(t.type, "value") else str(t.type),
                     "payee": t.payee,
                     "memo": t.memo,
                 }
