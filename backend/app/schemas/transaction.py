@@ -55,3 +55,18 @@ class TransactionPublic(BaseModel):
         if v == v.to_integral():
             return int(v)
         return float(v)
+
+
+class BulkDeleteResponse(BaseModel):
+    deleted_count: int
+    message: str
+
+
+class BatchCategorizeResponse(BaseModel):
+    total_processed: int
+    categorized_count: int
+    rules_count: int
+    ai_count: int
+    remaining_count: int
+    message: str
+

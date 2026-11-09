@@ -4,10 +4,10 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { notify } from '@/lib/dialog';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { confirmAsync, notify } from '@/lib/dialog';
 
-import { API_URL, apiDownloadBlob, apiUpload, getErrorMessage } from '@/lib/api';
+import { API_URL, api, apiDownloadBlob, apiUpload, getErrorMessage } from '@/lib/api';
 import { ACCESS_TOKEN_KEY, storage } from '@/lib/storage';
 
 interface ImportResult {
@@ -33,6 +33,78 @@ export default function DataScreen() {
   const [lastResult, setLastResult] = useState<ImportResult | null>(null);
   const [pickingStatement, setPickingStatement] = useState(false);
   const [statementResult, setStatementResult] = useState<StatementResult | null>(null);
+  const [categorizing, setCategorizing] = useState(false);
+  const [deletingBulk, setDeletingBulk] = useState(false);
+
+  async function handleBatchCategorize() {
+    setCategorizing(true);
+    try {
+      const res = await api<{
+        total_processed: number;
+        categorized_count: number;
+        rules_count: number;
+        ai_count: number;
+        remaining_count: number;
+        message: string;
+      }>(`/api/ledgers/${ledgerId}/transactions/batch-categorize`, { method: 'POST' });
+      notify('자동 분류 완료', res.message);
+      queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['categories', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['stats'] });
+    } catch (err) {
+      notify('자동 분류 실패', getErrorMessage(err, '자동 분류 실패'));
+    } finally {
+      setCategorizing(false);
+    }
+  }
+
+  async function handleDeleteUncategorized() {
+    const ok = await confirmAsync(
+      '방금 등록한 미분류 토스 거래 삭제',
+      '카테고리가 지정되지 않은 미분류 거래내역만 삭제하시겠습니까?\n기존에 분류해둔 정상 거래는 유지됩니다.',
+      { confirmText: '미분류 거래 삭제', destructive: true },
+    );
+    if (!ok) return;
+
+    setDeletingBulk(true);
+    try {
+      const res = await api<{ deleted_count: number; message: string }>(
+        `/api/ledgers/${ledgerId}/transactions/bulk?uncategorized_only=true`,
+        { method: 'DELETE' },
+      );
+      notify('삭제 완료', res.message);
+      queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['stats'] });
+    } catch (err) {
+      notify('삭제 실패', getErrorMessage(err, '거래내역 삭제 실패'));
+    } finally {
+      setDeletingBulk(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    const ok = await confirmAsync(
+      '모든 거래내역 삭제',
+      '이 가계부에 등록된 모든 거래내역을 정말 삭제하시겠습니까?\n토스 엑셀 재등록을 위해 초기화할 때 사용하며, 이 작업은 되돌릴 수 없습니다.',
+      { confirmText: '전체 삭제', destructive: true },
+    );
+    if (!ok) return;
+
+    setDeletingBulk(true);
+    try {
+      const res = await api<{ deleted_count: number; message: string }>(
+        `/api/ledgers/${ledgerId}/transactions/bulk`,
+        { method: 'DELETE' },
+      );
+      notify('삭제 완료', res.message);
+      queryClient.invalidateQueries({ queryKey: ['transactions', ledgerId] });
+      queryClient.invalidateQueries({ queryKey: ['stats'] });
+    } catch (err) {
+      notify('삭제 실패', getErrorMessage(err, '거래내역 삭제 실패'));
+    } finally {
+      setDeletingBulk(false);
+    }
+  }
 
   async function exportCsv() {
     setDownloading(true);
@@ -162,23 +234,42 @@ export default function DataScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <Stack.Screen options={{ title: '데이터 가져오기/내보내기' }} />
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
+      <Stack.Screen options={{ title: '데이터 관리 & 명세서' }} />
 
       {/* 스마트 카드 명세서 일괄 분석 & 등록 */}
       <View style={[styles.card, styles.highlightCard]}>
         <View style={styles.highlightBadge}>
-          <Text style={styles.highlightBadgeText}>✨ AI & 스마트 파싱</Text>
+          <Text style={styles.highlightBadgeText}>✨ 토스 & 카드 명세서 자동 파싱</Text>
         </View>
-        <Text style={styles.cardTitle}>카드 이용대금명세서 자동 분석 & 등록</Text>
+        <Text style={styles.cardTitle}>명세서 / 거래내역 엑셀 자동 분석 & 등록</Text>
         <Text style={styles.cardHint}>
-          국민카드, 농협카드, 현대카드 등 모든 카드사의 엑셀(.xlsx/.xls), PDF, CSV, 또는 화면 캡처 이미지를 올리면 소비 내역과 카테고리를 자동으로 분석하여 미리보기 후 원하는 항목만 일괄 등록합니다.
+          토스뱅크 거래내역 엑셀을 포함하여 모든 카드사/은행의 엑셀(.xlsx/.xls), PDF, CSV를 올리면 메모와 가맹점, 입출금을 자동 분류하여 미리보기 후 원하는 항목만 일괄 등록합니다.
         </Text>
         <Pressable
           style={[styles.button, styles.highlightButton]}
           onPress={() => router.push(`/(app)/ledger/${ledgerId}/statement-import`)}
         >
-          <Text style={styles.highlightButtonText}>🚀 카드 명세서 스마트 가져오기 시작</Text>
+          <Text style={styles.highlightButtonText}>🚀 토스 / 카드 명세서 가져오기</Text>
+        </Pressable>
+      </View>
+
+      {/* 미분류 거래 일괄 자동 분류 */}
+      <View style={[styles.card, styles.actionCard]}>
+        <Text style={styles.cardTitle}>미분류 거래 일괄 자동 분류</Text>
+        <Text style={styles.cardHint}>
+          이미 등록된 거래내역 중 카테고리가 비어있는 항목들을 메모와 가맹점명 분석을 통해 식비, 교통, 주거, 공과금 등으로 일괄 자동 분류합니다.
+        </Text>
+        <Pressable
+          style={[styles.button, styles.successButton, categorizing && { opacity: 0.6 }]}
+          disabled={categorizing}
+          onPress={handleBatchCategorize}
+        >
+          {categorizing ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>⚡ 미분류 거래 일괄 자동 분류 실행</Text>
+          )}
         </Pressable>
       </View>
 
@@ -233,52 +324,38 @@ export default function DataScreen() {
         )}
       </View>
 
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>카드 이용내역(엑셀) 가져오기</Text>
+      {/* 가계부 거래내역 초기화 (일괄 삭제) */}
+      <View style={[styles.card, styles.dangerCard]}>
+        <Text style={[styles.cardTitle, { color: '#B91C1C' }]}>거래내역 정리 및 초기화</Text>
         <Text style={styles.cardHint}>
-          카드사에서 받은 이용내역 엑셀(.xls/.xlsx)을 올리면 지출로 일괄 등록됩니다. 컬럼은
-          자동 인식하며, 취소 건은 환불(수입)로, 해외 건은 해당 통화로 등록됩니다. 카테고리는
-          미분류로 등록되니 이후 분류하세요.
+          방금 엑셀로 등록된 미분류 거래만 쏙 골라 삭제하거나, 가계부 전체 거래를 초기화할 수 있습니다.
         </Text>
         <Pressable
-          style={[styles.button, styles.secondary, (pickingStatement || statementMutation.isPending) && { opacity: 0.6 }]}
-          disabled={pickingStatement || statementMutation.isPending}
-          onPress={importStatement}
+          style={[styles.button, styles.dangerButton, { marginBottom: 8 }, deletingBulk && { opacity: 0.6 }]}
+          disabled={deletingBulk}
+          onPress={handleDeleteUncategorized}
         >
-          {pickingStatement || statementMutation.isPending ? (
-            <ActivityIndicator color="#1F2937" />
+          {deletingBulk ? (
+            <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.secondaryText}>🧾 엑셀 파일 선택</Text>
+            <Text style={styles.buttonText}>🧹 방금 등록한 미분류 토스 거래만 삭제</Text>
           )}
         </Pressable>
-
-        {statementResult && (
-          <View style={styles.resultBox}>
-            <Text style={styles.resultText}>
-              ✓ 등록 {statementResult.imported}건
-              {statementResult.income_from_cancel > 0 ? ` · 취소→수입 ${statementResult.income_from_cancel}` : ''}
-              {statementResult.foreign > 0 ? ` · 외화 ${statementResult.foreign}` : ''}
-              {statementResult.skipped > 0 ? ` · 제외 ${statementResult.skipped}` : ''}
-            </Text>
-            {statementResult.errors.length > 0 && (
-              <>
-                <Text style={styles.errorTitle}>건너뛴 줄 ({statementResult.errors.length}):</Text>
-                {statementResult.errors.slice(0, 5).map((e, i) => (
-                  <Text key={i} style={styles.errorLine}>
-                    • {e}
-                  </Text>
-                ))}
-              </>
-            )}
-          </View>
-        )}
+        <Pressable
+          style={[styles.button, styles.secondary, { borderColor: '#FCA5A5' }, deletingBulk && { opacity: 0.6 }]}
+          disabled={deletingBulk}
+          onPress={handleBulkDelete}
+        >
+          <Text style={[styles.secondaryText, { color: '#DC2626' }]}>전체 거래내역 초기화 (모두 삭제)</Text>
+        </Pressable>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', padding: 16 },
+  scroll: { flex: 1, backgroundColor: '#fff' },
+  container: { padding: 16, paddingBottom: 40 },
   card: {
     padding: 16,
     backgroundColor: '#F9FAFB',
@@ -314,4 +391,16 @@ const styles = StyleSheet.create({
   highlightBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   highlightButton: { backgroundColor: '#4F46E5' },
   highlightButtonText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  actionCard: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+    borderWidth: 1.5,
+  },
+  successButton: { backgroundColor: '#16A34A' },
+  dangerCard: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+    borderWidth: 1,
+  },
+  dangerButton: { backgroundColor: '#DC2626' },
 });

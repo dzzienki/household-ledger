@@ -20,7 +20,13 @@ from app.models import (
 )
 from app.models.category import TransactionType
 from app.schemas.tag import TagPublic
-from app.schemas.transaction import TransactionCreate, TransactionPublic, TransactionUpdate
+from app.schemas.transaction import (
+    BatchCategorizeResponse,
+    BulkDeleteResponse,
+    TransactionCreate,
+    TransactionPublic,
+    TransactionUpdate,
+)
 from app.schemas.transaction_item import TransactionItemCreate, TransactionItemPublic
 from app.services.recurring import materialize_due_for_ledger
 
@@ -240,6 +246,133 @@ async def create_transaction(
     await db.commit()
     await db.refresh(txn)
     return _to_public(txn, tags, items)
+
+
+@router.delete("/bulk", response_model=BulkDeleteResponse)
+async def bulk_delete_transactions(
+    db: DbDep,
+    membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
+    uncategorized_only: bool = Query(default=False, description="Delete only uncategorized transactions"),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    created_after: datetime | None = Query(default=None, description="Delete only transactions created after this timestamp"),
+) -> BulkDeleteResponse:
+    ledger, _ = membership
+    stmt = select(Transaction).where(Transaction.ledger_id == ledger.id)
+    if uncategorized_only:
+        stmt = stmt.where(Transaction.category_id.is_(None))
+    if created_after is not None:
+        stmt = stmt.where(Transaction.created_at >= created_after)
+    if start_date is not None:
+        stmt = stmt.where(Transaction.transaction_date >= start_date)
+    if end_date is not None:
+        stmt = stmt.where(Transaction.transaction_date <= end_date)
+
+    txns = list((await db.exec(stmt)).all())
+    count = len(txns)
+    if count == 0:
+        return BulkDeleteResponse(deleted_count=0, message="삭제할 거래내역이 없습니다.")
+
+    txn_ids = [t.id for t in txns]
+
+    # Delete related tags & items
+    for txn_id in txn_ids:
+        tag_links = list(
+            (await db.exec(select(TransactionTag).where(TransactionTag.transaction_id == txn_id))).all()
+        )
+        for link in tag_links:
+            await db.delete(link)
+        items = list(
+            (await db.exec(select(TransactionItem).where(TransactionItem.transaction_id == txn_id))).all()
+        )
+        for it in items:
+            await db.delete(it)
+
+    for t in txns:
+        await db.delete(t)
+
+    await db.commit()
+    msg = f"총 {count}건의 거래내역이 성공적으로 삭제되었습니다."
+    return BulkDeleteResponse(deleted_count=count, message=msg)
+
+
+@router.post("/batch-categorize", response_model=BatchCategorizeResponse)
+async def batch_auto_categorize_transactions(
+    db: DbDep,
+    membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
+    force_all: bool = Query(default=False, description="Re-evaluate all transactions even if already categorized"),
+) -> BatchCategorizeResponse:
+    ledger, _ = membership
+
+    categories = list((await db.exec(select(Category).where(Category.ledger_id == ledger.id))).all())
+    if not categories:
+        return BatchCategorizeResponse(
+            total_processed=0,
+            categorized_count=0,
+            rules_count=0,
+            ai_count=0,
+            remaining_count=0,
+            message="가계부에 등록된 카테고리가 없습니다.",
+        )
+
+    stmt = select(Transaction).where(Transaction.ledger_id == ledger.id)
+    if not force_all:
+        stmt = stmt.where(Transaction.category_id.is_(None))
+
+    txns = list((await db.exec(stmt)).all())
+    total_processed = len(txns)
+    if total_processed == 0:
+        return BatchCategorizeResponse(
+            total_processed=0,
+            categorized_count=0,
+            rules_count=0,
+            ai_count=0,
+            remaining_count=0,
+            message="분류할 대상 거래가 없습니다.",
+        )
+
+    rules_count = 0
+    ai_count = 0
+    from app.services.ai import is_ai_enabled, suggest_category
+    from app.services.statement_parser import _guess_category_by_rules
+
+    ai_enabled = is_ai_enabled()
+
+    for txn in txns:
+        corpus = f"{txn.payee or ''} {txn.memo or ''}".strip()
+        cat_id, cat_name = _guess_category_by_rules(corpus, categories, txn_type=txn.type.value)
+        if cat_id:
+            txn.category_id = cat_id
+            rules_count += 1
+            db.add(txn)
+        elif ai_enabled and (txn.payee or txn.memo):
+            try:
+                suggestion = suggest_category(
+                    payee=txn.payee,
+                    memo=txn.memo,
+                    txn_type=txn.type.value,
+                    categories=categories,
+                )
+                if suggestion and suggestion.category_id:
+                    txn.category_id = suggestion.category_id
+                    ai_count += 1
+                    db.add(txn)
+            except Exception:
+                pass
+
+    await db.commit()
+    categorized_count = rules_count + ai_count
+    remaining = total_processed - categorized_count
+
+    msg = f"총 {total_processed}건 중 {categorized_count}건 분류 완료 (규칙: {rules_count}건, AI: {ai_count}건, 미분류: {remaining}건)"
+    return BatchCategorizeResponse(
+        total_processed=total_processed,
+        categorized_count=categorized_count,
+        rules_count=rules_count,
+        ai_count=ai_count,
+        remaining_count=remaining,
+        message=msg,
+    )
 
 
 @router.get("/{transaction_id}", response_model=TransactionPublic)
