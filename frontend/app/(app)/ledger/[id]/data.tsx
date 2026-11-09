@@ -58,18 +58,20 @@ export default function DataScreen() {
     }
   }
 
-  async function handleDeleteUncategorized() {
+  async function handleDeleteToday() {
     const ok = await confirmAsync(
-      '방금 등록한 미분류 토스 거래 삭제',
-      '카테고리가 지정되지 않은 미분류 거래내역만 삭제하시겠습니까?\n기존에 분류해둔 정상 거래는 유지됩니다.',
-      { confirmText: '미분류 거래 삭제', destructive: true },
+      '오늘 등록된 토스 거래 전체 삭제',
+      '오늘 엑셀로 등록된 거래내역만 삭제하시겠습니까?\n이전에 등록해두셨던 기존 거래는 안전하게 유지되며, 방금 토스에서 들어와 분류된 거래와 미분류 거래만 모두 깔끔하게 삭제됩니다.',
+      { confirmText: '오늘 등록분 삭제', destructive: true },
     );
     if (!ok) return;
 
     setDeletingBulk(true);
     try {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
       const res = await api<{ deleted_count: number; message: string }>(
-        `/api/ledgers/${ledgerId}/transactions/bulk?uncategorized_only=true`,
+        `/api/ledgers/${ledgerId}/transactions/bulk?created_after=${todayStart.toISOString()}`,
         { method: 'DELETE' },
       );
       notify('삭제 완료', res.message);
@@ -328,17 +330,17 @@ export default function DataScreen() {
       <View style={[styles.card, styles.dangerCard]}>
         <Text style={[styles.cardTitle, { color: '#B91C1C' }]}>거래내역 정리 및 초기화</Text>
         <Text style={styles.cardHint}>
-          방금 엑셀로 등록된 미분류 거래만 쏙 골라 삭제하거나, 가계부 전체 거래를 초기화할 수 있습니다.
+          오늘 엑셀로 등록된 토스 거래내역(분류/미분류 포함)만 쏙 골라 삭제하거나, 가계부 전체 거래를 초기화할 수 있습니다.
         </Text>
         <Pressable
           style={[styles.button, styles.dangerButton, { marginBottom: 8 }, deletingBulk && { opacity: 0.6 }]}
           disabled={deletingBulk}
-          onPress={handleDeleteUncategorized}
+          onPress={handleDeleteToday}
         >
           {deletingBulk ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>🧹 방금 등록한 미분류 토스 거래만 삭제</Text>
+            <Text style={styles.buttonText}>🧹 오늘 등록된 토스 거래 전체 삭제 (기존 데이터 보존)</Text>
           )}
         </Pressable>
         <Pressable
