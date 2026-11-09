@@ -23,6 +23,7 @@ from app.api import (
     tags,
     transactions,
     users,
+    webhooks,
 )
 from app.core.config import settings
 from app.services.reminders import reminder_loop
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
     app.include_router(csv_io.router, prefix=api_prefix)
     app.include_router(statements.router, prefix=api_prefix)
     app.include_router(ai.router, prefix=api_prefix)
+    app.include_router(webhooks.router, prefix=api_prefix)
 
     return app
 

@@ -112,6 +112,10 @@ def _normalize_date(val: Any) -> str | None:
 
 def _detect_card_company(text_corpus: str) -> str | None:
     text = text_corpus.upper()
+    if "토스" in text or "TOSS" in text:
+        return "토스뱅크"
+    if "카카오뱅크" in text or "KAKAOBANK" in text:
+        return "카카오뱅크"
     if "KB" in text or "국민카드" in text or "KB국민" in text or "포인트리" in text:
         return "KB국민카드"
     if "NH" in text or "농협카드" in text or "NH농협" in text or "채움" in text:
@@ -136,13 +140,16 @@ def _detect_card_company(text_corpus: str) -> str | None:
 def _find_header_and_map(rows: list[list[Any]]) -> tuple[int, dict[str, int]] | None:
     """Find the table header row index and map column indices for date, payee, amount, etc."""
     header_keywords = {
-        "date": ["이용일", "이용일자", "거래일자", "승인일자", "승인일시", "일자", "날짜", "date"],
-        "payee": ["이용하신곳", "이용가맹점", "가맹점명", "가맹점", "사용처", "적요", "내용", "상호", "merchant", "payee"],
-        "amount": ["국내이용금액", "청구금액", "이용금액", "승인금액", "결제원금", "청구원금", "원금", "금액", "amount", "당월청구금액"],
+        "date": ["이용일", "이용일자", "거래일자", "승인일자", "승인일시", "일자", "날짜", "date", "거래일시", "거래일", "일시"],
+        "payee": ["이용하신곳", "이용가맹점", "가맹점명", "가맹점", "사용처", "적요", "내용", "상호", "merchant", "payee", "거래내용", "보낸분/받는분", "기재내용", "받는분/보낸분", "거래처"],
+        "amount": ["국내이용금액", "청구금액", "이용금액", "승인금액", "결제원금", "청구원금", "원금", "금액", "amount", "당월청구금액", "거래금액"],
+        "deposit": ["입금액", "입금", "맡기신금액", "입금금액", "입금(원)"],
+        "withdrawal": ["출금액", "출금", "찾으신금액", "출금금액", "지출", "출금(원)"],
         "card": ["이용카드명", "이용카드", "카드명", "카드번호", "카드"],
         "method": ["결제방법", "이용구분", "할부/회차", "할부", "할부개월"],
-        "status": ["상태", "접수여부", "매입상태", "구분"],
+        "status": ["상태", "접수여부", "매입상태", "구분", "거래구분", "입출구분", "종류", "거래종류"],
         "approval": ["승인번호"],
+        "balance": ["잔액", "거래후잔액", "현재잔액"],
     }
 
     best_row_idx = -1
@@ -162,7 +169,8 @@ def _find_header_and_map(rows: list[list[Any]]) -> tuple[int, dict[str, int]] | 
                         score += 1
                         break
 
-        if "date" in mapping and "payee" in mapping and "amount" in mapping:
+        has_amount_info = ("amount" in mapping) or ("deposit" in mapping or "withdrawal" in mapping)
+        if "date" in mapping and "payee" in mapping and has_amount_info:
             if score > best_score:
                 best_score = score
                 best_row_idx = r_idx
@@ -179,8 +187,32 @@ def _is_summary_row(row_strs: list[str]) -> bool:
     return any(marker in joined for marker in summary_markers)
 
 
-def _guess_category_by_rules(payee: str, categories: list[Category]) -> tuple[UUID | None, str | None]:
+def _guess_category_by_rules(
+    payee: str,
+    categories: list[Category],
+    txn_type: str = "expense",
+) -> tuple[UUID | None, str | None]:
     p = payee.lower()
+
+    if txn_type == "income":
+        income_cats = {c.name: c.id for c in categories if c.type == TransactionType.INCOME}
+        income_rules = [
+            (["급여", "월급", "상여", "보너스", "수당"], ["급여", "월급", "소득"]),
+            (["이자", "토스이자", "토스뱅크이자", "예금이자", "적금이자"], ["이자", "금융수입", "기타수입"]),
+            (["캐시백", "포인트", "환급", "적립"], ["기타수입", "수입", "환급"]),
+            (["당근", "중고", "송금", "입금"], ["기타수입", "수입"]),
+        ]
+        for keywords, target_cats in income_rules:
+            if any(kw in p for kw in keywords):
+                for t_cat in target_cats:
+                    for c_name, c_id in income_cats.items():
+                        if t_cat in c_name or c_name in t_cat:
+                            return c_id, c_name
+        for c_name, c_id in income_cats.items():
+            if c_name in p:
+                return c_id, c_name
+        return None, None
+
     name_map = {c.name: c.id for c in categories if c.type == TransactionType.EXPENSE}
 
     cat_rules = [
@@ -191,6 +223,7 @@ def _guess_category_by_rules(payee: str, categories: list[Category]) -> tuple[UU
         (["약국", "의원", "병원", "내과", "외과", "정형외과", "치과", "한의원", "이레미즈", "새희망내과", "대학약국"], ["의료/건강", "의료", "건강"]),
         (["통신", "lgu+", "lguplus", "sk텔레콤", "kt", "통신요금", "알뜰폰"], ["통신/주거", "통신비", "통신"]),
         (["넷플릭스", "유튜브", "쿠팡플레이", "티빙", "왓챠", "디즈니", "cgv", "롯데시네마", "메가박스", "anthropic", "openai", "apple", "구글", "모노맨션", "지방세"], ["문화/여가", "구독", "공과금", "문화/생활"]),
+        (["토스머니", "토스충전", "토스뱅크", "카카오페이", "네이버페이"], ["이체/금융", "금융", "기타"]),
     ]
 
     for keywords, target_cats in cat_rules:
@@ -218,11 +251,14 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
     header_idx, mapping = matched
     date_col = mapping["date"]
     payee_col = mapping["payee"]
-    amount_col = mapping["amount"]
+    amount_col = mapping.get("amount")
+    deposit_col = mapping.get("deposit")
+    withdrawal_col = mapping.get("withdrawal")
     card_col = mapping.get("card")
     method_col = mapping.get("method")
     status_col = mapping.get("status")
     approval_col = mapping.get("approval")
+    balance_col = mapping.get("balance")
 
     items: list[ParsedStatementItem] = []
     total_amount = 0.0
@@ -241,16 +277,48 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
         if not raw_payee or raw_payee == "-":
             continue
 
-        raw_amount = r[amount_col] if amount_col < len(r) else None
-        amount = _clean_amount(raw_amount)
-        if amount is None or amount == 0:
+        # Clean payee for bank/toss (e.g. "체크카드출금(스타벅스)", "체크카드(스타벅스)")
+        clean_payee = raw_payee
+        m_paren = re.search(r"(?:체크카드출금|체크카드|체크승인|체크출금)\((.+?)\)", clean_payee)
+        if m_paren:
+            clean_payee = m_paren.group(1).strip()
+        clean_payee = re.sub(r"^(?:토스_|토스머니_|토스뱅크_)", "", clean_payee)
+
+        final_amount: float | None = None
+        txn_type = "expense"
+
+        # Check separate withdrawal and deposit columns first
+        if withdrawal_col is not None and withdrawal_col < len(r):
+            w_val = _clean_amount(r[withdrawal_col])
+            if w_val is not None and w_val > 0:
+                final_amount = w_val
+                txn_type = "expense"
+
+        if (final_amount is None or final_amount == 0) and deposit_col is not None and deposit_col < len(r):
+            d_val = _clean_amount(r[deposit_col])
+            if d_val is not None and d_val > 0:
+                final_amount = d_val
+                txn_type = "income"
+
+        # Fallback to general amount column
+        if final_amount is None:
+            if amount_col is not None and amount_col < len(r):
+                raw_amt = _clean_amount(r[amount_col])
+                if raw_amt is not None and raw_amt != 0:
+                    final_amount = abs(raw_amt)
+                    if raw_amt < 0:
+                        txn_type = "expense"
+
+        if final_amount is None or final_amount == 0:
             continue
 
         raw_status = _clean_str(r[status_col]) if status_col is not None and status_col < len(r) else ""
-        is_cancel = "취소" in raw_status or "취소" in raw_payee or amount < 0
-
-        final_amount = abs(amount)
-        txn_type = "income" if is_cancel else "expense"
+        if any(w in raw_status for w in ["입금", "이자", "수입", "환급", "캐시백"]):
+            txn_type = "income"
+        elif any(w in raw_status for w in ["출금", "결제", "승인", "송금", "이체", "체크"]):
+            txn_type = "expense"
+        elif "취소" in raw_status or "취소" in raw_payee:
+            txn_type = "income" if txn_type == "expense" else "expense"
 
         memos = []
         if method_col is not None and method_col < len(r):
@@ -263,7 +331,11 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
             if c_name:
                 card_name = c_name
                 memos.append(c_name)
-        if is_cancel:
+        if balance_col is not None and balance_col < len(r):
+            bal = _clean_amount(r[balance_col])
+            if bal is not None:
+                memos.append(f"잔액 {int(bal):,}원")
+        if "취소" in raw_status or "취소" in raw_payee:
             memos.append("승인취소")
 
         approval_no = None
@@ -274,12 +346,12 @@ def _parse_raw_table(rows: list[list[Any]], categories: list[Category]) -> State
 
         memo_str = " | ".join(memos) if memos else None
 
-        cat_id, cat_name = _guess_category_by_rules(raw_payee, categories)
+        cat_id, cat_name = _guess_category_by_rules(clean_payee, categories, txn_type=txn_type)
 
         items.append(
             ParsedStatementItem(
                 transaction_date=norm_date,
-                payee=raw_payee,
+                payee=clean_payee,
                 amount=final_amount,
                 type=txn_type,
                 currency="KRW",
