@@ -68,5 +68,43 @@ class BatchCategorizeResponse(BaseModel):
     rules_count: int
     ai_count: int
     remaining_count: int
+    removed_transfers_count: int = 0
     message: str
+
+
+class InternalTransferItem(BaseModel):
+    id: UUID
+    type: TransactionType
+    amount: Decimal
+    transaction_date: date
+    payee: str | None
+    memo: str | None
+
+
+class InternalTransferPair(BaseModel):
+    pair_id: str
+    date: date
+    amount: Decimal
+    description: str
+    expense_txn: InternalTransferItem
+    income_txn: InternalTransferItem
+
+
+class InternalTransferListResponse(BaseModel):
+    pairs: list[InternalTransferPair]
+    total_count: int
+    total_amount: Decimal
+
+
+class InternalTransferResolveRequest(BaseModel):
+    transaction_ids: list[UUID] | None = None
+    pair_ids: list[str] | None = None
+    delete_all_detected: bool = False
+
+
+class InternalTransferResolveResponse(BaseModel):
+    deleted_count: int
+    freed_amount: Decimal
+    message: str
+
 

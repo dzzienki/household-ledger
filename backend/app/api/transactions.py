@@ -23,6 +23,11 @@ from app.schemas.tag import TagPublic
 from app.schemas.transaction import (
     BatchCategorizeResponse,
     BulkDeleteResponse,
+    InternalTransferItem,
+    InternalTransferListResponse,
+    InternalTransferPair,
+    InternalTransferResolveRequest,
+    InternalTransferResolveResponse,
     TransactionCreate,
     TransactionPublic,
     TransactionUpdate,
@@ -299,28 +304,188 @@ async def bulk_delete_transactions(
     return BulkDeleteResponse(deleted_count=count, message=msg)
 
 
+INTERNAL_TRANSFER_KEYWORDS = [
+    "모임통장", "허브", "생활비", "공과금", "수혈", "최명준", "강유리",
+    "관리비통장", "내계좌", "자동이체", "송금", "이체", "급여", "월급", "보탬", "모은돈"
+]
+
+EXTERNAL_MERCHANT_KEYWORDS = [
+    "스타벅스", "이디야", "투썸", "메가mgc", "빽다방", "컴포즈", "커피", "카페", "베이커리",
+    "식당", "음식점", "치킨", "버거", "맥도날드", "피자", "배달의민족", "요기요", "쿠팡이츠",
+    "이마트", "홈플러스", "롯데마트", "지에스25", "gs25", "씨유", "cu", "세븐일레븐", "마트", "쿠팡",
+    "약국", "병원", "의원", "치과", "내과", "cgv", "롯데시네마", "메가박스", "올리브영", "다이소"
+]
+
+
+async def _find_internal_transfer_pairs_for_ledger(
+    db: AsyncSession, ledger_id: UUID
+) -> list[dict[str, Any]]:
+    """Detects 1:1 matching internal transfers (e.g. hub account -> living/utility accounts) on the same date with exact amount."""
+    stmt = (
+        select(Transaction)
+        .where(Transaction.ledger_id == ledger_id)
+        .order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc())
+    )
+    txns = list((await db.exec(stmt)).all())
+
+    expenses = [t for t in txns if t.type == TransactionType.EXPENSE]
+    incomes = [t for t in txns if t.type == TransactionType.INCOME]
+
+    matched_expense_ids: set[UUID] = set()
+    matched_income_ids: set[UUID] = set()
+    pairs: list[dict[str, Any]] = []
+
+    for exp in expenses:
+        if exp.id in matched_expense_ids:
+            continue
+        exp_text = f"{exp.payee or ''} {exp.memo or ''}".lower().strip()
+        if any(ek in exp_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
+            continue
+
+        for inc in incomes:
+            if inc.id in matched_income_ids:
+                continue
+            if exp.transaction_date == inc.transaction_date and exp.amount == inc.amount:
+                inc_text = f"{inc.payee or ''} {inc.memo or ''}".lower().strip()
+                if any(ek in inc_text for ek in EXTERNAL_MERCHANT_KEYWORDS):
+                    continue
+
+                if any(k in exp_text for k in INTERNAL_TRANSFER_KEYWORDS) or any(k in inc_text for k in INTERNAL_TRANSFER_KEYWORDS):
+                    matched_expense_ids.add(exp.id)
+                    matched_income_ids.add(inc.id)
+                    desc = f"{exp.payee or '출금'} ➔ {inc.payee or '입금'}"
+                    pairs.append({
+                        "pair_id": f"{exp.id}_{inc.id}",
+                        "date": exp.transaction_date,
+                        "amount": exp.amount,
+                        "description": desc,
+                        "expense_txn": InternalTransferItem(
+                            id=exp.id,
+                            type=exp.type,
+                            amount=exp.amount,
+                            transaction_date=exp.transaction_date,
+                            payee=exp.payee,
+                            memo=exp.memo,
+                        ),
+                        "income_txn": InternalTransferItem(
+                            id=inc.id,
+                            type=inc.type,
+                            amount=inc.amount,
+                            transaction_date=inc.transaction_date,
+                            payee=inc.payee,
+                            memo=inc.memo,
+                        ),
+                    })
+                    break
+    return pairs
+
+
+@router.get("/internal-transfers", response_model=InternalTransferListResponse)
+async def list_internal_transfer_pairs(
+    db: DbDep,
+    membership: Annotated[tuple[Ledger, LedgerMember], Depends(get_ledger_membership)],
+) -> InternalTransferListResponse:
+    """Lists detected internal family / inter-account transfer duplicates."""
+    ledger, _ = membership
+    pairs_data = await _find_internal_transfer_pairs_for_ledger(db, ledger.id)
+    pairs = [InternalTransferPair(**p) for p in pairs_data]
+    total_amount = sum((p.amount for p in pairs), Decimal(0))
+    return InternalTransferListResponse(
+        pairs=pairs,
+        total_count=len(pairs),
+        total_amount=total_amount,
+    )
+
+
+@router.post("/internal-transfers/resolve", response_model=InternalTransferResolveResponse)
+async def resolve_internal_transfer_pairs(
+    payload: InternalTransferResolveRequest,
+    db: DbDep,
+    membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
+) -> InternalTransferResolveResponse:
+    """Resolves (deletes) duplicate inter-account transfer transactions to clean up double counting."""
+    ledger, _ = membership
+    pairs_data = await _find_internal_transfer_pairs_for_ledger(db, ledger.id)
+
+    txn_ids_to_delete: set[UUID] = set()
+
+    if payload.delete_all_detected:
+        for p in pairs_data:
+            txn_ids_to_delete.add(p["expense_txn"].id)
+            txn_ids_to_delete.add(p["income_txn"].id)
+    else:
+        if payload.pair_ids:
+            pair_set = set(payload.pair_ids)
+            for p in pairs_data:
+                if p["pair_id"] in pair_set:
+                    txn_ids_to_delete.add(p["expense_txn"].id)
+                    txn_ids_to_delete.add(p["income_txn"].id)
+        if payload.transaction_ids:
+            for tid in payload.transaction_ids:
+                txn_ids_to_delete.add(tid)
+
+    if not txn_ids_to_delete:
+        return InternalTransferResolveResponse(
+            deleted_count=0,
+            freed_amount=Decimal(0),
+            message="제거할 중복 이체 거래가 없습니다.",
+        )
+
+    stmt = select(Transaction).where(
+        Transaction.ledger_id == ledger.id,
+        Transaction.id.in_(txn_ids_to_delete),
+    )
+    txns_to_delete = list((await db.exec(stmt)).all())
+    deleted_count = len(txns_to_delete)
+    total_freed = sum((t.amount for t in txns_to_delete), Decimal(0))
+
+    # Also delete associated items / tags if any
+    for t in txns_to_delete:
+        await db.delete(t)
+    await db.commit()
+
+    return InternalTransferResolveResponse(
+        deleted_count=deleted_count,
+        freed_amount=total_freed,
+        message=f"총 {deleted_count}건의 내부 이체 중복 거래(총 {total_freed:,.0f}원)를 성공적으로 정리했습니다.",
+    )
+
+
 @router.post("/batch-categorize", response_model=BatchCategorizeResponse)
 async def batch_auto_categorize_transactions(
     db: DbDep,
     membership: Annotated[tuple[Ledger, LedgerMember], Depends(CanWrite)],
     force_all: bool = Query(default=False, description="Re-evaluate all transactions even if already categorized"),
+    reclassify_misc: bool = Query(default=True, description="Also re-evaluate transactions currently in 기타 지출 / 기타 수입 to refine them"),
+    deduplicate_transfers: bool = Query(default=False, description="Automatically remove exact inter-account transfer duplicate transactions"),
 ) -> BatchCategorizeResponse:
     ledger, _ = membership
 
-    categories = list((await db.exec(select(Category).where(Category.ledger_id == ledger.id))).all())
-    if not categories:
-        return BatchCategorizeResponse(
-            total_processed=0,
-            categorized_count=0,
-            rules_count=0,
-            ai_count=0,
-            remaining_count=0,
-            message="가계부에 등록된 카테고리가 없습니다.",
-        )
+    from app.services.categories import ensure_standard_categories
+    # Ensure standard categories exist (adds 보험, 금융/대출, 저축/투자, 경조사/선물, 용돈 if missing)
+    categories = await ensure_standard_categories(db, ledger.id)
+
+    removed_transfers_count = 0
+    if deduplicate_transfers:
+        pairs = await _find_internal_transfer_pairs_for_ledger(db, ledger.id)
+        if pairs:
+            tids = [p["expense_txn"].id for p in pairs] + [p["income_txn"].id for p in pairs]
+            del_stmt = select(Transaction).where(Transaction.ledger_id == ledger.id, Transaction.id.in_(tids))
+            to_del = list((await db.exec(del_stmt)).all())
+            for t in to_del:
+                await db.delete(t)
+            await db.commit()
+            removed_transfers_count = len(to_del)
+
+    # Identify misc category IDs if reclassify_misc is True
+    misc_cat_ids = [c.id for c in categories if c.name in ("기타 지출", "기타 수입", "기타")]
 
     stmt = select(Transaction).where(Transaction.ledger_id == ledger.id)
     if not force_all:
-        stmt = stmt.where(Transaction.category_id.is_(None))
+        if reclassify_misc and misc_cat_ids:
+            stmt = stmt.where((Transaction.category_id.is_(None)) | (Transaction.category_id.in_(misc_cat_ids)))
+        else:
+            stmt = stmt.where(Transaction.category_id.is_(None))
 
     txns = list((await db.exec(stmt)).all())
     total_processed = len(txns)
@@ -331,7 +496,8 @@ async def batch_auto_categorize_transactions(
             rules_count=0,
             ai_count=0,
             remaining_count=0,
-            message="분류할 대상 거래가 없습니다.",
+            removed_transfers_count=removed_transfers_count,
+            message=f"분류할 대상 거래가 없습니다.{f' (내부 이체 중복 {removed_transfers_count}건 정리 완료)' if removed_transfers_count > 0 else ''}",
         )
 
     rules_count = 0
@@ -345,11 +511,12 @@ async def batch_auto_categorize_transactions(
         corpus = f"{txn.payee or ''} {txn.memo or ''}".strip()
         txn_type_str = txn.type.value if hasattr(txn.type, "value") else str(txn.type)
         cat_id, cat_name = _guess_category_by_rules(corpus, categories, txn_type=txn_type_str)
-        if cat_id:
+        # If we got a category and it's different from current (or was None), update it
+        if cat_id and cat_id != txn.category_id:
             txn.category_id = cat_id
             rules_count += 1
             db.add(txn)
-        else:
+        elif txn.category_id is None:
             remaining_txns.append(txn)
 
     # Immediately commit rule-based classifications so they are never lost even if network issues occur
@@ -386,14 +553,20 @@ async def batch_auto_categorize_transactions(
     categorized_count = rules_count + ai_count
     remaining = total_processed - categorized_count
 
-    msg = f"총 {total_processed}건 중 {categorized_count}건 분류 완료 (규칙: {rules_count}건, AI: {ai_count}건, 미분류: {remaining}건)"
+    msg_parts = [f"총 {total_processed}건 검토 중 {categorized_count}건 세분화/분류 완료 (규칙: {rules_count}건, AI: {ai_count}건)"]
+    if removed_transfers_count > 0:
+        msg_parts.append(f"내부 이체 중복 {removed_transfers_count}건 정리")
+    if remaining > 0:
+        msg_parts.append(f"미분류/유지: {remaining}건")
+
     return BatchCategorizeResponse(
         total_processed=total_processed,
         categorized_count=categorized_count,
         rules_count=rules_count,
         ai_count=ai_count,
         remaining_count=remaining,
-        message=msg,
+        removed_transfers_count=removed_transfers_count,
+        message=", ".join(msg_parts),
     )
 
 
